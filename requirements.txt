@@ -1,7 +1,7 @@
 aiogram
+motor
 fastapi
 uvicorn
-motor
-apscheduler
-aiohttp
-tgcrypto
+telegraph
+jinja2
+python-multipart
