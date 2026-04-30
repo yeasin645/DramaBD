@@ -44,7 +44,7 @@ OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
 APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003188773719") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
-BOT_USERNAME = "BDMovieZoneBot" # আপনার বটের ইউজারনেম
+BOT_USERNAME = "dramastorkingsbot" # আপনার বটের ইউজারনেম
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
