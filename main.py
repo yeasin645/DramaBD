@@ -35,22 +35,41 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pydantic import BaseModel
 
-# ==========================================
-# 1. Configuration & Global Variables
-# ==========================================
-TOKEN = os.getenv("BOT_TOKEN")
-MONGO_URL = os.getenv("MONGO_URI")
-OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
-APP_URL = os.getenv("APP_URL")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003188773719") 
-ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
-BOT_USERNAME = "dramastorkingsbot" # আপনার বটের ইউজারনেম
+import os
+from motor.motor_asyncio import AsyncIOMotorClient
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic
 
+# ==========================================
+# 1. Configuration & Global Variables (Auto-Detect)
+# ==========================================
+
+# --- নিচের এই অংশে আপনার নিজের তথ্যগুলো লিখে রাখুন (বিকল্প হিসেবে) ---
+DEFAULT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # আপনার বটের টোকেন এখানে দিন
+DEFAULT_MONGO = "mongodb+srv://user:pass@cluster.mongodb.net/dbname" # আপনার MongoDB লিঙ্ক দিন
+DEFAULT_OWNER = 6283726212  # আপনার আইডি দিন
+DEFAULT_APP_URL = "https://your-app-name.koyeb.app" # আপনার অ্যাপ লিঙ্ক
+# -------------------------------------------------------------------
+
+# টোকেন ও মঙ্গো ইউআরএল অটো চেক
+TOKEN = os.getenv("BOT_TOKEN") or DEFAULT_TOKEN
+MONGO_URL = os.getenv("MONGO_URI") or DEFAULT_MONGO
+OWNER_ID = int(os.getenv("ADMIN_ID") or DEFAULT_OWNER)
+APP_URL = os.getenv("APP_URL") or DEFAULT_APP_URL
+CHANNEL_ID = os.getenv("CHANNEL_ID") or "-1003188773719" 
+ADMIN_PASS = os.getenv("ADMIN_PASS") or "admin123" 
+BOT_USERNAME = os.getenv("BOT_USERNAME") or "dramastorkingsbot"
+
+# বটের জন্য Bot এবং Dispatcher সেটাআপ
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
 security = HTTPBasic()
 
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware, 
     allow_origins=["*"], 
@@ -59,11 +78,16 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+# MongoDB কানেকশন চেক
+if not MONGO_URL or "localhost" in MONGO_URL:
+    print("⚠️ সতর্কবার্তা: MONGO_URI সেট করা হয়নি বা এটি লোকালহোস্টে আছে!")
+    # যদি কোডে সরাসরি কানেকশন স্ট্রিং দিয়ে থাকেন তবে এই ওয়ার্নিং আসবে না।
+
 client = AsyncIOMotorClient(MONGO_URL)
 db = client['movie_dramabd']
 
 admin_cache = set([OWNER_ID]) 
-banned_cache = set() 
+banned_cache = set()
 
 
 # ==========================================
