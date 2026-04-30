@@ -18,7 +18,7 @@ import uvicorn
 from jinja2 import Template
 
 # ==========================================
-# ১. কনফিগারেশন (আপনার দেওয়া ডাটা)
+# ১. কনফিগারেশন এবং ডাটাবেস
 # ==========================================
 TOKEN = "8655043839:AAHC6IzkAhvHzSE9FqQbkcs_hkxJkcpN9l0"
 MONGO_URL = "mongodb+srv://drama:drama@cluster0.sa4kvgu.mongodb.net/?appName=Cluster0"
@@ -26,9 +26,9 @@ OWNER_ID = 7120801813
 PUBLIC_CHANNEL = "@DramaStoreKing"
 APP_URL = "https://indirect-meris-yeasinvai-95120fc6.koyeb.app" 
 BOT_USERNAME = "dramastorkingsbot"
-PORT = 8080 
+PORT = int(os.environ.get("PORT", 8080))
 
-logging.basicConfig(level=logging.INFO)
+# ডাটাবেস কানেকশন
 client = AsyncIOMotorClient(MONGO_URL)
 db = client['movie_dramabd']
 content_col = db['contents']
@@ -41,7 +41,7 @@ dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
 
 # ==========================================
-# ২. এফএসএম (স্টেট ম্যানেজমেন্ট)
+# ২. এফএসএম (States)
 # ==========================================
 class MovieState(StatesGroup):
     name = State()
@@ -67,7 +67,7 @@ async def process_photo(message: types.Message):
     await bot.download_file(file_info.file_path, photo_name)
     try:
         response = upload_file(photo_name)
-        os.remove(photo_name)
+        if os.path.exists(photo_name): os.remove(photo_name)
         return f"https://telegra.ph{response[0]}"
     except: return "https://telegra.ph/file/0f2e825a07530467776d5.jpg"
 
@@ -85,7 +85,7 @@ async def get_config():
     return conf
 
 # ==========================================
-# ৪. বটের ১৭টি কমান্ড ও রিকোয়েস্ট সিস্টেম
+# ৪. ১৭টি কমান্ড হ্যান্ডলারস
 # ==========================================
 
 # ১. /start - শুরু ও ফাইল রিকভার
@@ -103,48 +103,41 @@ async def cmd_start(message: types.Message, command: CommandObject):
         [InlineKeyboardButton(text="📢 Main Channel", url=f"https://t.me/{PUBLIC_CHANNEL.replace('@','')}")],
         [InlineKeyboardButton(text="🔗 All Channels", url="https://t.me/all_channels")]
     ])
-    await message.answer_photo(photo=conf['logo'], caption=f"Hello YA UPLODER!\n\nWelcome to Moviee BD click the button below to explore! ❤️🍿", reply_markup=kb)
+    await message.answer_photo(photo=conf['logo'], caption="Hello YA UPLODER!\n\nWelcome to Moviee BD click the button below to explore! ❤️🍿", reply_markup=kb)
 
-# ২. /movie - মুভি আপলোড (ফাইল স্টোর)
+# ২. /movie - মুভি আপলোড
 @dp.message(Command("movie"))
 async def cmd_movie(m: types.Message, state: FSMContext):
     if m.from_user.id != OWNER_ID: return
-    await m.answer("🎬 মুভির নাম দিন:")
-    await state.set_state(MovieState.name)
+    await m.answer("🎬 মুভির নাম দিন:"); await state.set_state(MovieState.name)
 
 @dp.message(MovieState.name)
 async def m_st_name(m: types.Message, state: FSMContext):
     await state.update_data(name=m.text, links=[], views=0)
-    await m.answer("🖼 পোস্টারটি সরাসরি পাঠান (Photo Upload):")
-    await state.set_state(MovieState.photo)
+    await m.answer("🖼 পোস্টার ফটো পাঠান:"); await state.set_state(MovieState.photo)
 
 @dp.message(MovieState.photo, F.photo)
 async def m_st_photo(m: types.Message, state: FSMContext):
-    url = await process_photo(m)
-    await state.update_data(poster=url)
-    await m.answer("⚙️ কোয়ালিটি লিখুন (যেমন: 720p) অথবা Done দিন:", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
-    await state.set_state(MovieState.quality)
+    url = await process_photo(m); await state.update_data(poster=url)
+    await m.answer("⚙️ কোয়ালিটি দিন (যেমন: 720p) অথবা Done দিন:", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True)); await state.set_state(MovieState.quality)
 
 @dp.message(MovieState.quality)
 async def m_st_quality(m: types.Message, state: FSMContext):
     if m.text == "Done":
-        data = await state.get_data()
-        await content_col.insert_one({"type": "movie", **data, "date": datetime.now()})
+        data = await state.get_data(); await content_col.insert_one({"type": "movie", **data, "date": datetime.now()})
         conf = await get_config()
-        last_q = data['links'][-1]['q'] if data['links'] else "HD"
-        cap = f"🎬 মুভি: {data['name']}\n⚙️ কোয়ালিটি: {last_q}\n📢 চ্যানেল: {PUBLIC_CHANNEL}"
-        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=cap)
+        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"🎬 মুভি: {data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}")
         if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
         await m.answer("✅ মুভি স্টোর সফল!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
     else:
-        await state.update_data(cq=m.text); await m.answer(f"📁 {m.text} মুভি ফাইলটি (Video/File) সরাসরি পাঠান:"); await state.set_state(MovieState.file)
+        await state.update_data(cq=m.text); await m.answer(f"📁 {m.text} ভিডিও ফাইল পাঠান:"); await state.set_state(MovieState.file)
 
 @dp.message(MovieState.file, F.video | F.document)
 async def m_st_file(m: types.Message, state: FSMContext):
     data = await state.get_data(); uid = str(uuid.uuid4())[:8]
     await file_store.insert_one({"unique_id": uid, "msg_id": m.message_id, "name": data['name']})
     data['links'].append({"q": data['cq'], "uid": uid}); await state.update_data(links=data['links'])
-    await m.answer(f"✅ {data['cq']} স্টোর হয়েছে। পরের কোয়ালিটি বা Done দিন।"); await state.set_state(MovieState.quality)
+    await m.answer(f"✅ {data['cq']} সেভ। পরের কোয়ালিটি বা Done দিন।"); await state.set_state(MovieState.quality)
 
 # ৩. /series - ড্রামা আপলোড
 @dp.message(Command("series"))
@@ -160,8 +153,7 @@ async def s_st_name(m: types.Message, state: FSMContext):
 @dp.message(SeriesState.photo, F.photo)
 async def s_st_photo(m: types.Message, state: FSMContext):
     url = await process_photo(m); await state.update_data(poster=url)
-    await m.answer("📁 ১ম এপিসোড ভিডিও ফাইল পাঠান (শেষ হলে Done দিন):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
-    await state.set_state(SeriesState.files)
+    await m.answer("📁 ১ম এপিসোড ভিডিও ফাইল পাঠান (শেষ হলে Done দিন):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True)); await state.set_state(SeriesState.files)
 
 @dp.message(SeriesState.files, F.video | F.document)
 async def s_st_file(m: types.Message, state: FSMContext):
@@ -173,100 +165,111 @@ async def s_st_file(m: types.Message, state: FSMContext):
 @dp.message(SeriesState.files, F.text == "Done")
 async def s_st_done(m: types.Message, state: FSMContext):
     data = await state.get_data(); await content_col.insert_one({"type": "series", **data, "date": datetime.now()})
-    conf = await get_config(); cap = f"📺 ড্রামা: {data['name']}\n📁 এপিসোড: {len(data['episodes'])}\n📢 {PUBLIC_CHANNEL}"
-    post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=cap)
+    conf = await get_config(); post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"📺 ড্রামা: {data['name']}\n📢 {PUBLIC_CHANNEL}")
     if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
-    await m.answer("✅ সিরিজ স্টোর সফল!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
+    await m.answer("✅ ড্রামা স্টোর সফল!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
 
-# ৪-১৭. অন্যান্য কন্ট্রোল কমান্ডস
+# ৪. /logo - লোগো পরিবর্তন
 @dp.message(Command("logo"))
 async def cmd_logo(m: types.Message):
     if m.from_user.id == OWNER_ID:
         try: await settings_col.update_one({"id": "config"}, {"$set": {"logo": m.text.split()[1]}}, upsert=True); await m.answer("✅ লোগো আপডেট।")
-        except: await m.answer("ব্যাবহার: /logo [লিঙ্ক]")
+        except: await m.answer("/logo [লিঙ্ক]")
 
+# ৫. /autodlt - অটো ডিলিট টাইম
 @dp.message(Command("autodlt"))
 async def cmd_autodlt(m: types.Message):
     if m.from_user.id == OWNER_ID:
         try: await settings_col.update_one({"id": "config"}, {"$set": {"autodlt": int(m.text.split()[1])}}, upsert=True); await m.answer("✅ অটো ডিলিট সেট।")
         except: pass
 
+# ৬. /autolock - অটো লক টাইম
 @dp.message(Command("autolock"))
 async def cmd_autolock(m: types.Message):
     if m.from_user.id == OWNER_ID:
         try: await settings_col.update_one({"id": "config"}, {"$set": {"autolock": int(m.text.split()[1])}}, upsert=True); await m.answer("✅ অটো লক সেট।")
         except: pass
 
+# ৭. /setname - সাইট নাম
 @dp.message(Command("setname"))
 async def cmd_setname(m: types.Message):
     if m.from_user.id == OWNER_ID:
-        await settings_col.update_one({"id": "config"}, {"$set": {"site_name": m.text.replace("/setname ","")}}, upsert=True); await m.answer("✅ নাম সেট।")
+        await settings_col.update_one({"id": "config"}, {"$set": {"site_name": m.text.replace("/setname ","")}}, upsert=True); await m.answer("✅ নাম আপডেট।")
 
+# ৮. /setnotice - নোটিশ
 @dp.message(Command("setnotice"))
 async def cmd_setnotice(m: types.Message):
     if m.from_user.id == OWNER_ID:
-        await settings_col.update_one({"id": "config"}, {"$set": {"note": m.text.replace("/setnotice ","")}}, upsert=True); await m.answer("✅ নোটিশ সেট।")
+        await settings_col.update_one({"id": "config"}, {"$set": {"note": m.text.replace("/setnotice ","")}}, upsert=True); await m.answer("✅ নোটিশ আপডেট।")
 
+# ৯. /setmtg - মনিট্যাগ আইডি
 @dp.message(Command("setmtg"))
 async def cmd_setmtg(m: types.Message):
     if m.from_user.id == OWNER_ID:
         try: await settings_col.update_one({"id": "config"}, {"$set": {"mtg": m.text.split()[1]}}, upsert=True); await m.answer("✅ Monetag ID সেট।")
         except: pass
 
+# ১০. /seemtg - মনিট্যাগ আইডি দেখুন
 @dp.message(Command("seemtg"))
 async def cmd_seemtg(m: types.Message):
     conf = await get_config(); await m.answer(f"📢 Monetag ID: {conf.get('mtg')}")
 
+# ১১. /setstp - এড স্টেপ
 @dp.message(Command("setstp"))
 async def cmd_setstp(m: types.Message):
     if m.from_user.id == OWNER_ID:
-        try: await settings_col.update_one({"id": "config"}, {"$set": {"stp": int(m.text.split()[1])}}, upsert=True); await m.answer("✅ এড স্টেপ সেট।")
+        try: await settings_col.update_one({"id": "config"}, {"$set": {"stp": int(m.text.split()[1])}}, upsert=True); await m.answer("✅ এড স্টেপ আপডেট।")
         except: pass
 
+# ১২. /dm - মুভি ডিলিট
 @dp.message(Command("dm"))
 async def cmd_dm(m: types.Message):
     if m.from_user.id == OWNER_ID:
-        name = m.text.replace("/dm ", ""); await content_col.delete_one({"name": name, "type": "movie"}); await m.answer(f"🗑 {name} ডিলিট।")
+        name = m.text.replace("/dm ", ""); await content_col.delete_one({"name": name, "type": "movie"}); await m.answer("🗑 মুভি ডিলিট সফল।")
 
+# ১৩. /ds - সিরিজ ডিলিট
 @dp.message(Command("ds"))
 async def cmd_ds(m: types.Message):
     if m.from_user.id == OWNER_ID:
-        name = m.text.replace("/ds ", ""); await content_col.delete_one({"name": name, "type": "series"}); await m.answer(f"🗑 {name} ডিলিট।")
+        name = m.text.replace("/ds ", ""); await content_col.delete_one({"name": name, "type": "series"}); await m.answer("🗑 ড্রামা ডিলিট সফল।")
 
+# ১৪. /dlall - সব ডিলিট
 @dp.message(Command("dlall"))
 async def cmd_dlall(m: types.Message):
     if m.from_user.id == OWNER_ID:
         await content_col.delete_many({}); await file_store.delete_many({}); await m.answer("💥 সব ক্লিয়ার!")
 
+# ১৫. /stats - পরিসংখ্যান
 @dp.message(Command("stats"))
 async def cmd_stats(m: types.Message):
-    c = await content_col.count_documents({}); await m.answer(f"📊 মোট পোস্ট: {c}\n🌐 সাইট: {APP_URL}")
+    if m.from_user.id == OWNER_ID:
+        c = await content_col.count_documents({}); await m.answer(f"📊 মোট পোস্ট: {c}\n🌐 {APP_URL}")
 
+# ১৬. /perpost - পেজ লিমিট
 @dp.message(Command("perpost"))
 async def cmd_perpost(m: types.Message):
     if m.from_user.id == OWNER_ID:
-        try: await settings_col.update_one({"id": "config"}, {"$set": {"per": int(m.text.split()[1])}}, upsert=True); await m.answer("✅ পেজ লিমিট সেট।")
+        try: await settings_col.update_one({"id": "config"}, {"$set": {"per": int(m.text.split()[1])}}, upsert=True); await m.answer("✅ লিমিট সেট।")
         except: pass
 
+# ১৭. /notifi - নোটিফিকেশন চ্যানেল
 @dp.message(Command("notifi"))
 async def cmd_notifi(m: types.Message):
     if m.from_user.id == OWNER_ID:
         try: ch = m.text.split()[1]; await notif_col.update_one({"id": ch}, {"$set": {"id": ch}}, upsert=True); await m.answer("✅ চ্যানেল যুক্ত।")
         except: pass
 
-# রিকোয়েস্ট সিস্টেম হ্যান্ডলার
+# রিকোয়েস্ট বাটন হ্যান্ডলার
 @dp.callback_query(F.data == "req")
-async def req_callback(cb: types.CallbackQuery, state: FSMContext):
+async def req_cb(cb: types.CallbackQuery, state: FSMContext):
     await cb.message.answer("📝 মুভির নাম লিখে পাঠান:"); await state.set_state(ReqState.movie_name); await cb.answer()
 
 @dp.message(ReqState.movie_name)
 async def process_req(m: types.Message, state: FSMContext):
-    cap = f"🚨 **নতুন রিকোয়েস্ট!**\n👤: {m.from_user.full_name}\n🆔: `{m.from_user.id}`\n🎬: **{m.text}**"
-    await bot.send_message(chat_id=OWNER_ID, text=cap, parse_mode="Markdown")
-    await m.answer("✅ রিকোয়েস্ট পাঠানো হয়েছে!"); await state.clear()
+    await bot.send_message(chat_id=OWNER_ID, text=f"🚨 **রিকোয়েস্ট:**\n👤: {m.from_user.full_name}\n🎬: **{m.text}**"); await m.answer("✅ পাঠানো হয়েছে!"); await state.clear()
 
 # ==========================================
-# ৫. প্রিমিয়াম ওয়েবসাইট (FastAPI)
+# ৫. প্রিমিয়াম ওয়েবসাইট ডিজাইন (FastAPI)
 # ==========================================
 
 INDEX_HTML = """
@@ -278,13 +281,13 @@ INDEX_HTML = """
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@10/swiper-bundle.min.css" />
     <style>
-        body { background: #050505; color: #fff; font-family: 'Poppins', sans-serif; }
+        body { background: #000; color: #fff; font-family: sans-serif; }
         .notice { background: linear-gradient(90deg, #ff0055, #ffcc00); padding: 7px; text-align: center; font-weight: bold; position: sticky; top: 0; z-index: 1000; }
         .poster-card { position: relative; border-radius: 15px; overflow: hidden; background: #111; border: 1px solid #222; transition: 0.3s; }
-        .poster-card:hover { transform: translateY(-5px); border-color: #ff0055; }
+        .poster-card:hover { transform: scale(1.05); border-color: #ff0055; }
         .poster-card img { width: 100%; height: 260px; object-fit: cover; }
         .v-badge { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.8); color: #00ffcc; padding: 2px 7px; font-size: 11px; border-radius: 5px; }
-        .m-name { padding: 10px; text-align: center; font-size: 13px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .m-name { padding: 10px; text-align: center; font-size: 13px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .swiper { width: 100%; height: 220px; border-radius: 15px; margin-bottom: 20px; }
         .swiper-slide img { width: 100%; height: 100%; object-fit: cover; }
     </style>
@@ -292,7 +295,7 @@ INDEX_HTML = """
 <body>
     <div class="notice">{{ conf.note }}</div>
     <div class="container py-4">
-        <h4 class="text-center mb-4 text-danger">{{ conf.site_name }}</h4>
+        <h4 class="text-center mb-3 text-danger">{{ conf.site_name }}</h4>
         <div class="swiper mySwiper"><div class="swiper-wrapper">
             {% for s in slider %}<div class="swiper-slide"><a href="/view/{{ s._id }}"><img src="{{ s.poster }}"></a></div>{% endfor %}
         </div></div>
@@ -324,7 +327,7 @@ DETAIL_HTML = """
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #000; color: #fff; text-align: center; padding-top: 30px; }
-        .poster { width: 85%; max-width: 360px; border-radius: 20px; box-shadow: 0 0 25px #ff0055; margin-bottom: 25px; }
+        .poster { width: 85%; max-width: 350px; border-radius: 20px; box-shadow: 0 0 25px #ff0055; margin-bottom: 25px; }
         .p-box { background: #111; padding: 25px; border-radius: 20px; margin: 20px; border: 1px solid #333; }
         .d-btn { display: block; background: #222; color: #00ffcc; padding: 15px; margin-bottom: 12px; border-radius: 12px; text-decoration: none; font-weight: bold; border: 1px solid #444; }
         .lock { background: linear-gradient(45deg, #ff0055, #ffcc00); padding: 17px; border-radius: 15px; font-weight: bold; cursor: pointer; }
@@ -335,12 +338,12 @@ DETAIL_HTML = """
     <a href="https://t.me/DramaStoreKing" class="tg-icon"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="30"></a>
     <img src="{{ item.poster }}" class="poster"><h3>{{ item.name }}</h3>
     <div class="p-box">
-        <div id="l-ui" class="lock" onclick="unlock()">🚀 Unlock Links (Watch Ad)</div>
+        <div id="l-ui" class="lock" onclick="unlock()">🚀 Unlock File (Watch Ad)</div>
         <div id="u-ui" style="display:none;">
             {% if item.type == 'movie' %}
                 {% for l in item.links %}<a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="d-btn">Get File ({{ l.q }})</a>{% endfor %}
             {% else %}
-                {% for e in item.episodes %}<a href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="d-btn">Get {{ e.ep }} File</a>{% endfor %}
+                {% for e in item.episodes %}<a href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="d-btn">Get {{ e.ep }}</a>{% endfor %}
             {% endif %}
         </div>
     </div>
@@ -350,7 +353,7 @@ DETAIL_HTML = """
         function unlock() { localStorage.setItem('un_{{ item._id }}', Date.now()); show(); }
         function show() { document.getElementById('l-ui').style.display='none'; document.getElementById('u-ui').style.display='block'; }
     </script>
-    <a href="/" class="btn btn-outline-danger mt-4 px-5">Home</a>
+    <a href="/" class="btn btn-outline-danger mt-4">Home</a>
 </body>
 </html>
 """
@@ -369,14 +372,12 @@ async def detail(id: str):
     return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
 
 # ==========================================
-# ৬. রান ফাংশন
+# ৬. ফাইনাল রান ফাংশন
 # ==========================================
-async def run_bot():
+@app.on_event("startup")
+async def on_startup():
     await bot.delete_webhook(drop_pending_updates=True)
-    print("🚀 Master Bot & Site Live!")
-    await dp.start_polling(bot)
+    asyncio.create_task(dp.start_polling(bot))
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(run_bot())
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info")
