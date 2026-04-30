@@ -44,32 +44,32 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic
 
 # ==========================================
-# 1. Configuration & Global Variables (Auto-Detect)
+# 1. Configuration & Global Variables
 # ==========================================
+import os
+from motor.motor_asyncio import AsyncIOMotorClient
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic
 
-# --- নিচের এই অংশে আপনার নিজের তথ্যগুলো লিখে রাখুন (বিকল্প হিসেবে) ---
-DEFAULT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # আপনার বটের টোকেন এখানে দিন
-DEFAULT_MONGO = "mongodb+srv://user:pass@cluster.mongodb.net/dbname" # আপনার MongoDB লিঙ্ক দিন
-DEFAULT_OWNER = 6283726212  # আপনার আইডি দিন
-DEFAULT_APP_URL = "https://your-app-name.koyeb.app" # আপনার অ্যাপ লিঙ্ক
-# -------------------------------------------------------------------
+# আপনার দেওয়া তথ্যগুলো এখানে সেট করা হয়েছে (Fallback system)
+TOKEN = os.getenv("BOT_TOKEN", "8655043839:AAH8Wxhd8jE8Y85XBdz8kRG2suLmqQx7mSU")
+MONGO_URL = os.getenv("MONGO_URI", "mongodb+srv://drama:drama@cluster0.sa4kvgu.mongodb.net/?appName=Cluster0")
+OWNER_ID = int(os.getenv("ADMIN_ID", "7120801813"))
+APP_URL = os.getenv("APP_URL", "https://indirect-meris-yeasinvai-95120fc6.koyeb.app")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003309004720") 
+ADMIN_PASS = os.getenv("ADMIN_PASS", "akash198") 
+BOT_USERNAME = os.getenv("BOT_USERNAME", "dramastorkingsbot")
 
-# টোকেন ও মঙ্গো ইউআরএল অটো চেক
-TOKEN = os.getenv("BOT_TOKEN") or DEFAULT_TOKEN
-MONGO_URL = os.getenv("MONGO_URI") or DEFAULT_MONGO
-OWNER_ID = int(os.getenv("ADMIN_ID") or DEFAULT_OWNER)
-APP_URL = os.getenv("APP_URL") or DEFAULT_APP_URL
-CHANNEL_ID = os.getenv("CHANNEL_ID") or "-1003188773719" 
-ADMIN_PASS = os.getenv("ADMIN_PASS") or "admin123" 
-BOT_USERNAME = os.getenv("BOT_USERNAME") or "dramastorkingsbot"
-
-# বটের জন্য Bot এবং Dispatcher সেটাআপ
+# বটের এবং অ্যাপের অবজেক্ট তৈরি
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
 security = HTTPBasic()
 
-# CORS Middleware
+# CORS সেটিংস
 app.add_middleware(
     CORSMiddleware, 
     allow_origins=["*"], 
@@ -78,16 +78,16 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# MongoDB কানেকশন চেক
-if not MONGO_URL or "localhost" in MONGO_URL:
-    print("⚠️ সতর্কবার্তা: MONGO_URI সেট করা হয়নি বা এটি লোকালহোস্টে আছে!")
-    # যদি কোডে সরাসরি কানেকশন স্ট্রিং দিয়ে থাকেন তবে এই ওয়ার্নিং আসবে না।
-
+# ডাটাবেস কানেকশন
 client = AsyncIOMotorClient(MONGO_URL)
 db = client['movie_dramabd']
 
+# ক্যাশ সেটিংস
 admin_cache = set([OWNER_ID]) 
 banned_cache = set()
+
+print("✅ Configuration Loaded Successfully!")
+print(f"🤖 Bot: @{BOT_USERNAME}")
 
 
 # ==========================================
