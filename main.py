@@ -2430,7 +2430,7 @@ async def send_file(d: SendRequestModel):
             title_text = f"{m['title']} [{q_text}]" if q_text else m['title']
             
             if is_vip:
-                caption = (f"🎥 <b>{title_text}</b>\n\n🌟 <b>VIP সুবিধা:</b> এই ফাইলটি আপনার ইনবক্স থেকে কখনো অটো-ডিলিট হবে না।\n\n📥 Join: @TGLinkBase")
+                caption = (f"🎥 <b>{title_text}</b>\n\n🌟 <b>VIP সুবিধা:</b> এই ফাইলটি আপনার ইনবক্স থেকে কখনো অটো-ডিলিট হবে না।\n\n📥 Join: @DramaStoreKing")
             else:
                 caption = (f"🎥 <b>{title_text}</b>\n\n⏳ <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হয়ে যাবে। "
                            f"দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @DramaStoreKing")
