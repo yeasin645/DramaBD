@@ -18,9 +18,9 @@ import uvicorn
 from jinja2 import Template
 
 # ==========================================
-# ১. কনফিগারেশন এবং ডাটাবেস
+# ১. কনফিগারেশন (আপনার নতুন টোকেন সহ)
 # ==========================================
-TOKEN = "8655043839:AAHC6IzkAhvHzSE9FqQbkcs_hkxJkcpN9l0"
+TOKEN = "8655043839:AAHC6IzkAhvHzSE9FqQbkcs_hkxJkcpN9l0" # আপনার দেওয়া নতুন টোকেন
 MONGO_URL = "mongodb+srv://drama:drama@cluster0.sa4kvgu.mongodb.net/?appName=Cluster0"
 OWNER_ID = 7120801813
 PUBLIC_CHANNEL = "@DramaStoreKing"
@@ -28,7 +28,6 @@ APP_URL = "https://indirect-meris-yeasinvai-95120fc6.koyeb.app"
 BOT_USERNAME = "dramastorkingsbot"
 PORT = int(os.environ.get("PORT", 8080))
 
-# ডাটাবেস কানেকশন
 client = AsyncIOMotorClient(MONGO_URL)
 db = client['movie_dramabd']
 content_col = db['contents']
@@ -41,7 +40,7 @@ dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
 
 # ==========================================
-# ২. এফএসএম (States)
+# ২. এফএসএম (স্টেট ম্যানেজমেন্ট)
 # ==========================================
 class MovieState(StatesGroup):
     name = State()
@@ -88,7 +87,6 @@ async def get_config():
 # ৪. ১৭টি কমান্ড হ্যান্ডলারস
 # ==========================================
 
-# ১. /start - শুরু ও ফাইল রিকভার
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, command: CommandObject):
     if command.args:
@@ -103,7 +101,13 @@ async def cmd_start(message: types.Message, command: CommandObject):
         [InlineKeyboardButton(text="📢 Main Channel", url=f"https://t.me/{PUBLIC_CHANNEL.replace('@','')}")],
         [InlineKeyboardButton(text="🔗 All Channels", url="https://t.me/all_channels")]
     ])
-    await message.answer_photo(photo=conf['logo'], caption="Hello YA UPLODER!\n\nWelcome to Moviee BD click the button below to explore! ❤️🍿", reply_markup=kb)
+    
+    caption = f"Hello YA UPLODER!\n\nWelcome to Moviee BD click the button below to explore! ❤️🍿"
+    try:
+        await message.answer_photo(photo=conf['logo'], caption=caption, reply_markup=kb)
+    except Exception:
+        # যদি লোগো লিঙ্ক কাজ না করে তবে টেক্সট মেসেজ পাঠাবে
+        await message.answer(caption, reply_markup=kb)
 
 # ২. /movie - মুভি আপলোড
 @dp.message(Command("movie"))
@@ -327,7 +331,7 @@ DETAIL_HTML = """
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #000; color: #fff; text-align: center; padding-top: 30px; }
-        .poster { width: 85%; max-width: 350px; border-radius: 20px; box-shadow: 0 0 25px #ff0055; margin-bottom: 25px; }
+        .poster { width: 85%; max-width: 360px; border-radius: 20px; box-shadow: 0 0 25px #ff0055; margin-bottom: 25px; }
         .p-box { background: #111; padding: 25px; border-radius: 20px; margin: 20px; border: 1px solid #333; }
         .d-btn { display: block; background: #222; color: #00ffcc; padding: 15px; margin-bottom: 12px; border-radius: 12px; text-decoration: none; font-weight: bold; border: 1px solid #444; }
         .lock { background: linear-gradient(45deg, #ff0055, #ffcc00); padding: 17px; border-radius: 15px; font-weight: bold; cursor: pointer; }
@@ -338,7 +342,7 @@ DETAIL_HTML = """
     <a href="https://t.me/DramaStoreKing" class="tg-icon"><img src="https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg" width="30"></a>
     <img src="{{ item.poster }}" class="poster"><h3>{{ item.name }}</h3>
     <div class="p-box">
-        <div id="l-ui" class="lock" onclick="unlock()">🚀 Unlock File (Watch Ad)</div>
+        <div id="l-ui" class="lock" onclick="unlock()">🚀 Unlock Links (Watch Ad)</div>
         <div id="u-ui" style="display:none;">
             {% if item.type == 'movie' %}
                 {% for l in item.links %}<a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="d-btn">Get File ({{ l.q }})</a>{% endfor %}
@@ -353,7 +357,7 @@ DETAIL_HTML = """
         function unlock() { localStorage.setItem('un_{{ item._id }}', Date.now()); show(); }
         function show() { document.getElementById('l-ui').style.display='none'; document.getElementById('u-ui').style.display='block'; }
     </script>
-    <a href="/" class="btn btn-outline-danger mt-4">Home</a>
+    <a href="/" class="btn btn-outline-danger mt-4 px-5">Home</a>
 </body>
 </html>
 """
@@ -372,12 +376,14 @@ async def detail(id: str):
     return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
 
 # ==========================================
-# ৬. ফাইনাল রান ফাংশন
+# ৬. রান ফাংশন (Conflict Fix সহ)
 # ==========================================
 @app.on_event("startup")
 async def on_startup():
+    # drop_pending_updates=True দিলে কনফ্লিক্ট এরর ফিক্স হবে
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(dp.start_polling(bot))
+    print("🚀 Master Bot started in background...")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info")
