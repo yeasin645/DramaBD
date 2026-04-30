@@ -20,7 +20,7 @@ from jinja2 import Template
 # ==========================================
 # ১. কনফিগারেশন (আপনার দেওয়া ডাটা)
 # ==========================================
-TOKEN = "8655043839:AAH8Wxhd8jE8Y85XBdz8kRG2suLmqQx7mSU"
+TOKEN = "8655043839:AAHC6IzkAhvHzSE9FqQbkcs_hkxJkcpN9l0"
 MONGO_URL = "mongodb+srv://drama:drama@cluster0.sa4kvgu.mongodb.net/?appName=Cluster0"
 OWNER_ID = 7120801813
 PUBLIC_CHANNEL = "@DramaStoreKing"
