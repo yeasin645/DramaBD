@@ -60,7 +60,7 @@ app.add_middleware(
 )
 
 client = AsyncIOMotorClient(MONGO_URL)
-db = client['movie_d4atabase']
+db = client['movie_dramabd']
 
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
