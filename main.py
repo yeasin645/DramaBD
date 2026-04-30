@@ -2433,7 +2433,7 @@ async def send_file(d: SendRequestModel):
                 caption = (f"🎥 <b>{title_text}</b>\n\n🌟 <b>VIP সুবিধা:</b> এই ফাইলটি আপনার ইনবক্স থেকে কখনো অটো-ডিলিট হবে না।\n\n📥 Join: @TGLinkBase")
             else:
                 caption = (f"🎥 <b>{title_text}</b>\n\n⏳ <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হয়ে যাবে। "
-                           f"দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @TGLinkBase")
+                           f"দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @DramaStoreKing")
             
             if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
