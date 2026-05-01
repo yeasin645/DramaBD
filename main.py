@@ -42,7 +42,7 @@ media_store = db['media_store']
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# --- এফএসএম (স্টেট ম্যানেজমেন্ট) ---
+# --- এফএসএম ---
 class MovieState(StatesGroup):
     name = State()
     category = State()
@@ -59,7 +59,7 @@ class SeriesState(StatesGroup):
 class ReqState(StatesGroup):
     movie_name = State()
 
-# --- হেল্পার ফাংশন সমূহ ---
+# --- হেল্পার ফাংশন ---
 async def get_config():
     conf = await settings_col.find_one({"id": "config"})
     if not conf:
@@ -67,7 +67,7 @@ async def get_config():
             "id": "config", "site_name": "Moviee BD", "note": "মুভি দেখার নতুন ঠিকানা!", 
             "logo": f"{APP_URL}/media/default_logo", 
             "autodlt": 10, "autolock": 10, "per": 10, "mtg": "10351894", "stp": 1, "protect": False,
-            "ad_timer": 12 # ডিফল্ট ১২ সেকেন্ড সেট করা হলো
+            "ad_timer": 12 
         }
         await settings_col.insert_one(conf)
     return conf
@@ -94,7 +94,6 @@ async def auto_delete_task(chat_id, message_id, minutes):
         try: await bot.delete_message(chat_id, message_id)
         except: pass
 
-# --- লাইফস্প্যান (Conflict Error ফিক্স করার জন্য) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await bot.delete_webhook(drop_pending_updates=True)
@@ -110,7 +109,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # ==========================================
-# ২. ১৯টি কমান্ড + নতুন /batad কমান্ড (একটিও বাদ নেই)
+# ২. টেলিগ্রাম কমান্ডস (সকল ১৯+ কমান্ড অক্ষত)
 # ==========================================
 
 @dp.message(Command("start"))
@@ -262,7 +261,7 @@ async def set_mtg(m: types.Message):
     try:
         v = m.text.split()[1]
         await settings_col.update_one({"id": "config"}, {"$set": {"mtg": v}}, upsert=True)
-        await m.answer("✅ Monetag ID আপডেট হয়েছে।")
+        await m.answer(f"✅ Monetag ID আপডেট হয়েছে: `{v}`")
     except: await m.answer("ব্যবহার: /setmtg 123456")
 
 @dp.message(Command("seemtg"))
@@ -338,15 +337,10 @@ async def req_cb(cb: types.CallbackQuery, state: FSMContext):
 async def req_process(m: types.Message, state: FSMContext):
     await bot.send_message(chat_id=OWNER_ID, text=f"🚨 রিকোয়েস্ট: {m.text}\n👤: {m.from_user.full_name}"); await m.answer("✅ পাঠানো হয়েছে!"); await state.clear()
 
-# ==========================================
-# ৩. ওয়েব ডিজাইন (ব্যাক বাটন, রিলোড, ৪ কলাম গ্রিড ও টাইমার)
-# ==========================================
 
-@app.get("/media/{media_id}")
-async def serve_media(media_id: str):
-    media = await media_store.find_one({"media_id": media_id})
-    if media: return Response(content=media['data'], media_type=media['mime'])
-    return Response(status_code=404)
+# ==========================================
+# ৩. উন্নত ওয়েব ডিজাইন (Lighting Buttons + Timer)
+# ==========================================
 
 INDEX_HTML = """
 <!DOCTYPE html>
@@ -355,91 +349,67 @@ INDEX_HTML = """
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ conf.site_name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <style>
-        body { background: #fff; color: #000; font-family: 'Segoe UI', sans-serif; }
-        .top-nav { background: #f8f9fa; border-bottom: 1px solid #eee; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; }
-        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #eee; }
-        .logo { font-size: 20px; font-weight: bold; }
-        .logo span { background: red; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
-        .stats-bar { padding: 10px 15px; font-size: 13px; color: #666; background: #f9f9f9; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+        body { background: #0f0f0f; color: #fff; font-family: 'Segoe UI', sans-serif; }
+        .top-nav { background: #1a1a1a; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; border-bottom: 2px solid #333; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #111; }
+        .logo { font-size: 24px; font-weight: 900; color: #fff; text-transform: uppercase; }
+        .logo span { background: #ff0000; color: #fff; padding: 2px 8px; border-radius: 5px; margin-left: 5px; }
         
         .filters { display: flex; overflow-x: auto; padding: 10px 15px; gap: 10px; scrollbar-width: none; }
-        .filter-btn { background: #f0f0f0; border: none; padding: 8px 18px; border-radius: 20px; white-space: nowrap; font-size: 14px; cursor: pointer; }
-        .filter-btn.active { background: #000; color: #fff; }
+        .filter-btn { background: #222; color: #ccc; border: 1px solid #444; padding: 8px 20px; border-radius: 30px; white-space: nowrap; font-size: 14px; transition: 0.3s; }
+        .filter-btn.active { background: #ff0000; color: #fff; border-color: #ff0000; box-shadow: 0 0 10px #ff0000; }
 
-        .carousel-item img { height: 180px; object-fit: cover; border-radius: 15px; }
-        .carousel-caption { background: rgba(0,0,0,0.5); border-radius: 10px; padding: 5px; }
+        .search-area { padding: 15px; }
+        .search-box { width: 100%; padding: 14px 25px; border-radius: 30px; border: 2px solid #ff0000; background: #1a1a1a; color: #fff; outline: none; box-shadow: 0 0 15px rgba(255,0,0,0.2); }
 
-        .search-area { padding: 10px 15px; }
-        .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 2px solid #5d259e; outline: none; font-size: 15px; }
-
-        .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 10px; }
-        .movie-card { border-radius: 15px; overflow: hidden; border: 2px solid #ffcc00; position: relative; }
-        .movie-card img { width: 100%; height: 230px; object-fit: cover; }
+        .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 15px; }
+        .movie-card { background: #1a1a1a; border-radius: 15px; overflow: hidden; border: 1px solid #333; transition: 0.3s; position: relative; }
+        .movie-card:hover { transform: scale(1.02); border-color: #ff0000; }
+        .movie-card img { width: 100%; height: 240px; object-fit: cover; }
         
-        .badge-cat { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.7); color: #fff; font-size: 10px; padding: 3px 7px; border-radius: 5px; }
-        .badge-quality { position: absolute; top: 8px; right: 8px; background: red; color: #fff; font-size: 10px; padding: 3px 7px; border-radius: 5px; font-weight: bold; }
-        .badge-ep { position: absolute; bottom: 50px; right: 8px; background: #5d259e; color: #fff; font-size: 10px; padding: 3px 7px; border-radius: 5px; }
+        .badge-cat { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 5px; font-size: 11px; }
+        .badge-quality { position: absolute; top: 10px; right: 10px; background: #ff0000; padding: 4px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
         
-        .m-name { padding: 10px; font-weight: bold; font-size: 14px; color: #333; text-align: center; min-height: 45px; display: flex; align-items: center; justify-content: center; }
+        .m-name { padding: 12px; font-weight: 600; font-size: 15px; text-align: center; color: #eee; }
         
-        .pagination { justify-content: center; margin-top: 20px; gap: 5px; }
-        .page-link { border-radius: 50% !important; color: #000; border: 1px solid #eee; width: 35px; height: 35px; display: flex; align-items: center; justify-content: center; }
-        .page-item.active .page-link { background: #000; border-color: #000; color:#fff;}
+        .pagination .page-link { background: #222; border: 1px solid #444; color: #fff; margin: 0 5px; border-radius: 5px; }
+        .pagination .active .page-link { background: #ff0000; border-color: #ff0000; }
     </style>
 </head>
 <body>
     <div class="top-nav">
-        <button onclick="history.back()" class="btn btn-sm btn-dark">⬅ Back</button>
-        <button onclick="location.reload()" class="btn btn-sm btn-outline-dark">🔄 Reload</button>
+        <button onclick="history.back()" class="btn btn-sm btn-outline-light">⬅ Back</button>
+        <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
     </div>
 
     <div class="header">
         <div class="logo">Moviee <span>BD</span></div>
-        <div style="width:35px;height:35px;background:#eee;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px">YA</div>
-    </div>
-    
-    <div class="stats-bar">
-        <span>🎬 Movies: {{ total_m }}</span>
-        <span>📺 Series: {{ total_s }}</span>
-    </div>
-
-    <div class="container mt-2">
-        <div id="topSlider" class="carousel slide" data-bs-ride="carousel">
-            <div class="carousel-inner">
-                {% for t in top_items %}
-                <div class="carousel-item {% if loop.first %}active{% endif %}">
-                    <a href="/view/{{ t._id }}"><img src="{{ t.poster }}" class="d-block w-100"></a>
-                    <div class="carousel-caption"><h6>{{ t.name }}</h6></div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
+        <div style="width:40px;height:40px;background:#333;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid #ff0000;">🎬</div>
     </div>
 
     <div class="filters">
-        <button class="filter-btn active" onclick="filterCat('all', this)">All</button>
+        <button class="filter-btn active" onclick="filterCat('all', this)">All Content</button>
         {% set cats = [] %}
         {% for i in all_cats_items %}{% if i.cat and i.cat not in cats %}{% set _ = cats.append(i.cat) %}{% endif %}{% endfor %}
         {% for c in cats %}<button class="filter-btn" onclick="filterCat('{{ c }}', this)">{{ c }}</button>{% endfor %}
     </div>
 
     <div class="search-area">
-        <input type="text" class="search-box" placeholder="সার্চ করুন..." onkeyup="searchMe(this.value)">
+        <input type="text" class="search-box" placeholder="মুভি বা সিরিজের নাম লিখুন..." onkeyup="searchMe(this.value)">
     </div>
 
     <div class="movie-grid" id="movieList">
         {% for i in items %}
         <div class="movie-item" data-name="{{ i.name | lower }}" data-cat="{{ i.cat }}">
             <a href="/view/{{ i._id }}" class="text-decoration-none">
-                <div class="movie-card" style="border-color: {{ ['#ff0000','#00ff00','#0000ff','#ffcc00','#5d259e'] | random }}">
+                <div class="movie-card">
                     <img src="{{ i.poster }}" loading="lazy">
                     <div class="badge-cat">{{ i.cat }}</div>
                     {% if i.type == 'movie' %}
                         <div class="badge-quality">{{ i.quality }}</div>
                     {% else %}
-                        <div class="badge-ep">{{ i.episodes | length }} EP</div>
+                        <div class="badge-quality" style="background:#5d259e">{{ i.episodes | length }} EP</div>
                     {% endif %}
                     <div class="m-name">{{ i.name }}</div>
                 </div>
@@ -448,21 +418,11 @@ INDEX_HTML = """
         {% endfor %}
     </div>
 
-    <nav>
-      <ul class="pagination">
-        {% if current_page > 1 %}
-        <li class="page-item"><a class="page-link" href="/?page={{ current_page - 1 }}">Prev</a></li>
-        {% endif %}
-        {% for p in range(1, total_pages + 1) %}
-        <li class="page-item {% if p == current_page %}active{% endif %}">
-            <a class="page-link" href="/?page={{ p }}">{{ p }}</a>
-        </li>
-        {% endfor %}
-        {% if current_page < total_pages %}
-        <li class="page-item"><a class="page-link" href="/?page={{ current_page + 1 }}">Next</a></li>
-        {% endif %}
-      </ul>
-    </nav>
+    <nav class="mt-4"><ul class="pagination justify-content-center">
+        {% if current_page > 1 %}<li class="page-item"><a class="page-link" href="/?page={{ current_page - 1 }}">Prev</a></li>{% endif %}
+        <li class="page-item active"><a class="page-link">{{ current_page }}</a></li>
+        {% if current_page < total_pages %}<li class="page-item"><a class="page-link" href="/?page={{ current_page + 1 }}">Next</a></li>{% endif %}
+    </ul></nav>
 
     <script>
         function filterCat(c, b) {
@@ -492,55 +452,94 @@ DETAIL_HTML = """
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ item.name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Monetag SDK -->
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
     <style>
-        body { background: #000; color: #fff; text-align: center; padding: 0; }
-        .top-nav { background: #111; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; border-bottom: 1px solid #333; }
-        .poster { width: 100%; max-width: 350px; border-radius: 20px; border: 4px solid #00ff00; box-shadow: 0 0 20px #00ff00; margin-top: 20px; }
+        body { background: #000; color: #fff; text-align: center; padding-bottom: 50px; }
+        .top-nav { background: #111; padding: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
+        .poster { width: 90%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.5); margin: 20px auto; display: block; }
         
-        .timer-info { background: #1a1a1a; padding: 10px; margin: 15px; border-radius: 10px; font-size: 13px; color: #ffcc00; }
-        
-        /* ৪ কলাম এপিসোড গ্রিড */
-        .ep-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 15px; }
-        .btn-ep { padding: 12px 5px; border-radius: 8px; font-weight: bold; font-size: 12px; border: none; color: #fff; cursor: pointer; text-decoration: none; display: block; }
-        .c1 { background: #007bff; } .c2 { background: #dc3545; } .c3 { background: #28a745; } .c4 { background: #6f42c1; }
-        .get-btn { background: #28a745; display: none; }
+        /* এনিমেটেড টাইমার বক্স */
+        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 18px; box-shadow: 0 0 15px #ff0000; display: none; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
 
-        .btn-movie { background: linear-gradient(45deg, #5d259e, #a020f0); color: #fff; padding: 18px; border-radius: 12px; width: 90%; margin: 10px auto; font-weight: bold; display: block; text-decoration: none; border: none; }
+        /* লাইটিং বাটন ডিজাইন */
+        .btn-premium { 
+            position: relative; overflow: hidden; padding: 18px; width: 90%; margin: 15px auto; 
+            border-radius: 15px; border: none; font-weight: 800; font-size: 18px; color: #fff;
+            background: linear-gradient(45deg, #ff0000, #ff5555);
+            box-shadow: 0 0 20px rgba(255, 0, 0, 0.6);
+            transition: 0.4s; text-decoration: none; display: block;
+        }
+        .btn-premium::before {
+            content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+            background: rgba(255,255,255,0.2); transform: rotate(45deg);
+            transition: 0.5s; pointer-events: none;
+        }
+        .btn-premium:active { transform: scale(0.95); }
+
+        /* বড় ইপিসোড গ্রিড */
+        .ep-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 15px; }
+        .btn-ep { 
+            padding: 20px 5px; border-radius: 12px; font-weight: bold; font-size: 14px; 
+            border: 2px solid transparent; color: #fff; cursor: pointer; text-decoration: none; 
+            display: flex; align-items: center; justify-content: center; transition: 0.3s;
+        }
+        .c1 { background: #007bff; box-shadow: 0 0 10px #007bff; } 
+        .c2 { background: #e91e63; box-shadow: 0 0 10px #e91e63; } 
+        .c3 { background: #4caf50; box-shadow: 0 0 10px #4caf50; }
+        .get-btn { background: #ffc107; color: #000; box-shadow: 0 0 15px #ffc107; display: none; }
+
+        .unlock-msg { color: #ffcc00; margin-top: 10px; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="top-nav">
-        <button onclick="history.back()" class="btn btn-sm btn-light">⬅ Back</button>
-        <button onclick="location.reload()" class="btn btn-sm btn-outline-light">🔄 Reload</button>
+        <button onclick="location.href='/'" class="btn btn-sm btn-outline-light">🏠 Home</button>
+        <span style="font-weight:bold; color:red;">Premium Player</span>
+        <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
     </div>
 
     <img src="{{ item.poster }}" class="poster">
-    <h3 class="my-3">{{ item.name }}</h3>
+    <h2 class="px-3" style="font-weight:800;">{{ item.name }}</h2>
+    <p class="text-muted">{{ item.cat }} • {{ item.type | upper }}</p>
 
-    <div id="countdown-msg" class="timer-info" style="display:none;"></div>
+    <!-- টাইমার ডিসপ্লে -->
+    <div id="countdown-msg" class="timer-info"></div>
 
     <div id="unlock-section">
-        {% if item.type == 'movie' %}{% for l in item.links %}
-            <div id="box-{{ l.uid }}">
-                <button id="btn-{{ l.uid }}" class="btn-movie" onclick="startAd('{{ l.uid }}')">🔓 UNLOCK FILE (Step 1/{{ conf.stp }})</button>
-                <div id="get-{{ l.uid }}" style="display:none;"><a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn btn-success btn-lg w-75 p-3">📥 GET MOVIE</a></div>
+        {% if item.type == 'movie' %}
+            {% for l in item.links %}
+            <div id="box-{{ l.uid }}" class="px-3">
+                <button id="btn-{{ l.uid }}" class="btn-premium" onclick="startAd('{{ l.uid }}')">
+                    🔓 UNLOCK {{ l.q }} FILE
+                </button>
+                <div id="get-{{ l.uid }}" style="display:none;">
+                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-premium" style="background:#00c853; box-shadow:0 0 25px #00c853;">
+                        📥 DOWNLOAD / WATCH NOW
+                    </a>
+                </div>
             </div>
-        {% endfor %}{% else %}
+            {% endfor %}
+        {% else %}
             <div class="ep-grid">
             {% for e in item.episodes %}
                 <div id="box-{{ e.uid }}">
-                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3','c4']|random }}" onclick="startAd('{{ e.uid }}')">EP-{{ loop.index }}</button>
+                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3']|random }}" onclick="startAd('{{ e.uid }}')">
+                        EP - {{ loop.index }}
+                    </button>
                     <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">GET</a>
                 </div>
             {% endfor %}
             </div>
+            <p class="unlock-msg">যেকোনো একটি এপিসোডে ক্লিক করে আনলক করুন</p>
         {% endif %}
     </div>
 
     <script>
         const autolockMins = {{ conf.autolock }};
         const adTimerSecs = {{ conf.ad_timer }};
+        const zoneId = "{{ conf.mtg }}";
         let adStartedAt = 0;
 
         function setLocal(key, val, minutes) {
@@ -549,25 +548,35 @@ DETAIL_HTML = """
         }
 
         function getLocal(key) {
-            const item = JSON.parse(localStorage.getItem(key));
-            if (!item) return null;
-            if (new Date().getTime() > item.expiry) { localStorage.removeItem(key); return null; }
+            const itemStr = localStorage.getItem(key);
+            if (!itemStr) return null;
+            const item = JSON.parse(itemStr);
+            if (new Date().getTime() > item.expiry) { 
+                localStorage.removeItem(key); 
+                return null; 
+            }
             return item;
         }
 
         function updateLockDisplay() {
             const allKeys = Object.keys(localStorage);
             const activeKey = allKeys.find(k => k.startsWith('unlocked_') && getLocal(k));
+            const msgBox = document.getElementById('countdown-msg');
+            
             if(activeKey) {
                 const item = JSON.parse(localStorage.getItem(activeKey));
                 const remaining = Math.round((item.expiry - new Date().getTime()) / 1000);
                 if(remaining > 0) {
                     const mins = Math.floor(remaining / 60);
                     const secs = remaining % 60;
-                    const msg = document.getElementById('countdown-msg');
-                    msg.style.display = 'block';
-                    msg.innerText = `🔐 এটি ${mins} মি. ${secs} সে. পর পুনরায় লক হবে।`;
+                    msgBox.style.display = 'block';
+                    msgBox.innerHTML = `🔐 এটি ${mins}মি. ${secs}সে. পর লক হবে।`;
+                } else {
+                    msgBox.style.display = 'none';
+                    location.reload();
                 }
+            } else {
+                msgBox.style.display = 'none';
             }
         }
 
@@ -577,7 +586,7 @@ DETAIL_HTML = """
                 if (getLocal('unlocked_' + uid)) {
                     btn.style.display = 'none';
                     const getLink = document.getElementById('get-' + uid);
-                    if(getLink) getLink.style.display = 'block';
+                    if(getLink) getLink.style.display = 'flex';
                 }
             });
         }
@@ -588,14 +597,19 @@ DETAIL_HTML = """
             const now = new Date().getTime();
             if (adStartedAt === 0) {
                 adStartedAt = now;
-                if (typeof show_{{ conf.mtg }} === 'function') { show_{{ conf.mtg }}(); }
-                alert("এডটি ওপেন হয়েছে। অন্তত " + adTimerSecs + " সেকেন্ড এডটি দেখুন, তারপর আবার বাটনে ক্লিক করুন।");
+                // Monetag function call dynamically using zoneId
+                if (typeof window['show_' + zoneId] === 'function') { 
+                    window['show_' + zoneId](); 
+                } else {
+                    console.log("Ad SDK not ready, retrying...");
+                }
+                alert("অ্যাড ওপেন হয়েছে! কমপক্ষে " + adTimerSecs + " সেকেন্ড দেখে আবার বাটনে ক্লিক করুন।");
                 return;
             }
 
             const elapsed = (now - adStartedAt) / 1000;
             if (elapsed < adTimerSecs) {
-                alert("দয়া করে এডটি সম্পূর্ণ দেখুন! আরও " + Math.round(adTimerSecs - elapsed) + " সেকেন্ড বাকি।");
+                alert("দয়া করে অ্যাডটি সম্পূর্ণ দেখুন! আরও " + Math.round(adTimerSecs - elapsed) + " সেকেন্ড বাকি।");
                 return;
             }
 
@@ -608,12 +622,13 @@ DETAIL_HTML = """
             setInterval(updateLockDisplay, 1000);
         };
     </script>
-    <br><a href="/" class="btn btn-outline-light mb-4">🏠 Home</a>
 </body>
 </html>
 """
 
-# --- রুট লজিক ---
+# ==========================================
+# ৪. রুট লজিক
+# ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, page: int = 1, user_id: str = None):
     conf = await get_config()
@@ -642,8 +657,11 @@ async def detail(id: str):
     if not item: return "Not Found"
     return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
 
-# ==========================================
-# ৪. মেইন এন্ট্রি পয়েন্ট
-# ==========================================
+@app.get("/media/{media_id}")
+async def serve_media(media_id: str):
+    media = await media_store.find_one({"media_id": media_id})
+    if media: return Response(content=media['data'], media_type=media['mime'])
+    return Response(status_code=404)
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info", workers=1)
