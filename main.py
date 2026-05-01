@@ -3,6 +3,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from aiogram import Bot, Dispatcher, types, F
@@ -36,13 +37,26 @@ file_store = db['files']
 user_col = db['users']
 view_logs = db['view_logs']
 notif_col = db['notif_channels']
-media_store = db['media_store'] # ইমেজ স্টোর করার জন্য
+media_store = db['media_store']
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
-app = FastAPI()
 
-# --- এফএসএম (স্টেট ম্যানেজমেন্ট) ---
+# --- লাইফস্প্যান (নতুন সিস্টেম) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: বট পোলিং শুরু
+    await bot.delete_webhook(drop_pending_updates=True)
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+    logging.info("Bot started polling...")
+    yield
+    # Shutdown: বট বন্ধ করা
+    polling_task.cancel()
+    await bot.session.close()
+
+app = FastAPI(lifespan=lifespan)
+
+# --- এফএসএম ---
 class MovieState(StatesGroup):
     name = State()
     photo = State()
@@ -57,27 +71,24 @@ class SeriesState(StatesGroup):
 class ReqState(StatesGroup):
     movie_name = State()
 
-# --- হেল্পার ফাংশন সমূহ ---
+# --- হেল্পার ফাংশন ---
 async def get_config():
     conf = await settings_col.find_one({"id": "config"})
     if not conf:
         conf = {
             "id": "config", "site_name": "Moviee BD", "note": "মুভি দেখার নতুন ঠিকানা!", 
-            "logo": f"{APP_URL}/media/default_logo", 
+            "logo": f"{APP_URL}/media/default", 
             "autodlt": 10, "autolock": 10, "per": 10, "mtg": "10351894", "stp": 1, "protect": False
         }
         await settings_col.insert_one(conf)
     return conf
 
 async def process_photo(message: types.Message):
-    """টেলিগ্রাফের বদলে নিজস্ব সার্ভারে ইমেজ সেভ করার সিস্টেম"""
     try:
         photo = message.photo[-1]
         file_info = await bot.get_file(photo.file_id)
-        # ইমেজটি মেমোরিতে ডাউনলোড করা
         photo_bytes = await bot.download_file(file_info.file_path)
         media_id = str(uuid.uuid4())[:12]
-        # ডাটাবেসে বাইনারি ডাটা হিসেবে সেভ করা
         await media_store.insert_one({
             "media_id": media_id,
             "data": photo_bytes.read(),
@@ -95,15 +106,13 @@ async def auto_delete_task(chat_id, message_id, minutes):
         except: pass
 
 # ==========================================
-# ২. ১৯টি পূর্ণাঙ্গ কমান্ড হ্যান্ডলারস
+# ২. বট কমান্ডস
 # ==========================================
 
-# ১. /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, command: CommandObject):
     user_data = {"id": message.from_user.id, "name": message.from_user.full_name, "username": message.from_user.username, "date": datetime.now()}
     await user_col.update_one({"id": message.from_user.id}, {"$set": user_data}, upsert=True)
-
     conf = await get_config()
     if command.args:
         f_data = await file_store.find_one({"unique_id": command.args})
@@ -111,17 +120,14 @@ async def cmd_start(message: types.Message, command: CommandObject):
             is_protect = conf.get("protect", False)
             await bot.copy_message(chat_id=message.chat.id, from_chat_id=OWNER_ID, message_id=f_data['msg_id'], caption=f"🎬 মুভি: {f_data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}", protect_content=is_protect)
             return
-
     login_url = f"{APP_URL}/?user_id={message.from_user.id}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎬 Watch Now (Premium Login)", url=login_url)],
-        [InlineKeyboardButton(text="📥 Movie Request", callback_data="req"), InlineKeyboardButton(text="🚀 Share Bot", switch_inline_query="")],
-        [InlineKeyboardButton(text="📢 Main Channel", url=f"https://t.me/{PUBLIC_CHANNEL.replace('@','')}")],
-        [InlineKeyboardButton(text="🔗 All Channels", url="https://t.me/all_channels")]
+        [InlineKeyboardButton(text="🎬 Watch Now (Login)", url=login_url)],
+        [InlineKeyboardButton(text="📥 Request", callback_data="req"), InlineKeyboardButton(text="🚀 Share", switch_inline_query="")],
+        [InlineKeyboardButton(text="📢 Channel", url=f"https://t.me/{PUBLIC_CHANNEL.replace('@','')}")]
     ])
     await message.answer_photo(photo=conf['logo'], caption=f"Hello {message.from_user.first_name}! ❤️🍿\n\nমুভি দেখতে নিচের বাটনে ক্লিক করুন।", reply_markup=kb)
 
-# ২. /movie
 @dp.message(Command("movie"))
 async def add_movie(m: types.Message, state: FSMContext):
     if m.from_user.id != OWNER_ID: return
@@ -142,17 +148,15 @@ async def m_photo(m: types.Message, state: FSMContext):
 async def m_quality(m: types.Message, state: FSMContext):
     if m.text and m.text.strip().casefold() == "done":
         data = await state.get_data()
-        if not data.get('links'):
-            await m.answer("❌ কোনো ফাইল যুক্ত করেননি!"); return
+        if not data.get('links'): await m.answer("❌ কোনো ফাইল নেই!"); return
         await content_col.insert_one({"type": "movie", **data, "date": datetime.now()})
         conf = await get_config()
-        cap = f"🎬 মুভি: {data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}"
-        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=cap)
+        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"🎬 মুভি: {data['name']}\n📢 {PUBLIC_CHANNEL}")
         if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
-        await m.answer("✅ মুভিটি সাইটে আপলোড হয়েছে!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
+        await m.answer("✅ মুভি সাইটে আপলোড হয়েছে!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
     else:
         await state.update_data(cq=m.text)
-        await m.answer(f"📁 {m.text} এর ভিডিও ফাইলটি সরাসরি এখানে পাঠান (শেষ করতে Done লিখুন):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
+        await m.answer(f"📁 {m.text} এর ফাইলটি পাঠান (বা Done লিখুন):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
         await state.set_state(MovieState.file)
 
 @dp.message(MovieState.file, F.video | F.document)
@@ -160,9 +164,9 @@ async def m_file_store(m: types.Message, state: FSMContext):
     data = await state.get_data(); uid = str(uuid.uuid4())[:8]
     await file_store.insert_one({"unique_id": uid, "msg_id": m.message_id, "name": data['name']})
     links = data.get('links', []); links.append({"q": data['cq'], "uid": uid}); await state.update_data(links=links)
-    await m.answer(f"✅ {data['cq']} সেভ হয়েছে। পরের কোয়ালিটি দিন বা Done লিখুন।"); await state.set_state(MovieState.quality)
+    await m.answer(f"✅ {data['cq']} সেভ। পরের কোয়ালিটি দিন বা Done লিখুন।"); await state.set_state(MovieState.quality)
 
-# ৩. /series
+# সিরিজ আপলোড (অনুরূপভাবে)
 @dp.message(Command("series"))
 async def add_series(m: types.Message, state: FSMContext):
     if m.from_user.id != OWNER_ID: return
@@ -175,7 +179,7 @@ async def s_name(m: types.Message, state: FSMContext):
 @dp.message(SeriesState.photo, F.photo)
 async def s_photo(m: types.Message, state: FSMContext):
     url = await process_photo(m); await state.update_data(poster=url)
-    await m.answer("📁 ১ম এপিসোড ফাইল পাঠান (শেষ হলে Done লিখুন):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
+    await m.answer("📁 ১ম এপিসোড ফাইল পাঠান:", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
     await state.set_state(SeriesState.files)
 
 @dp.message(SeriesState.files)
@@ -184,10 +188,9 @@ async def s_files_store(m: types.Message, state: FSMContext):
         data = await state.get_data()
         await content_col.insert_one({"type": "series", **data, "date": datetime.now()})
         conf = await get_config()
-        cap = f"📺 ড্রামা: {data['name']}\n📁 এপিসোড সংখ্যা: {len(data['episodes'])}\n📢 {PUBLIC_CHANNEL}"
-        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=cap)
+        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"📺 ড্রামা: {data['name']}\n📢 {PUBLIC_CHANNEL}")
         if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
-        await m.answer("✅ ড্রামাটি সাইটে আপলোড হয়েছে!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
+        await m.answer("✅ ড্রামা সাইটে আপলোড হয়েছে!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
     elif m.video or m.document:
         data = await state.get_data(); uid = str(uuid.uuid4())[:8]
         ep_n = f"Episode {len(data['episodes'])+1:02d}"
@@ -195,7 +198,6 @@ async def s_files_store(m: types.Message, state: FSMContext):
         eps = data.get('episodes', []); eps.append({"ep": ep_n, "uid": uid}); await state.update_data(episodes=eps)
         await m.answer(f"✅ {ep_n} সেভ। পরের ফাইল দিন বা Done লিখুন।")
 
-# ৪. /protect
 @dp.message(Command("protect"))
 async def cmd_protect(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -203,116 +205,29 @@ async def cmd_protect(m: types.Message):
     await settings_col.update_one({"id": "config"}, {"$set": {"protect": ns}}, upsert=True)
     await m.answer(f"🔐 ফাইল প্রটেকশন: {'অন' if ns else 'অফ'}")
 
-# ৫. /logo
-@dp.message(Command("logo"))
-async def set_logo(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        try: link = m.text.split()[1]; await settings_col.update_one({"id": "config"}, {"$set": {"logo": link}}, upsert=True); await m.answer("✅ লোগো সেট হয়েছে।")
-        except: await m.answer("/logo [image_url]")
-
-# ৬. /autodlt
-@dp.message(Command("autodlt"))
-async def set_autodlt(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        try: v = int(m.text.split()[1]); await settings_col.update_one({"id": "config"}, {"$set": {"autodlt": v}}, upsert=True); await m.answer(f"✅ অটো ডিলিট: {v} মিনিট।")
-        except: pass
-
-# ৭. /autolock
-@dp.message(Command("autolock"))
-async def set_autolock(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        try: v = int(m.text.split()[1]); await settings_col.update_one({"id": "config"}, {"$set": {"autolock": v}}, upsert=True); await m.answer(f"✅ অটো লক: {v} মিনিট।")
-        except: pass
-
-# ৮. /setname
-@dp.message(Command("setname"))
-async def set_name(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        n = m.text.replace("/setname ",""); await settings_col.update_one({"id": "config"}, {"$set": {"site_name": n}}, upsert=True); await m.answer("✅ সাইট নাম সেট।")
-
-# ৯. /setnotice
-@dp.message(Command("setnotice"))
-async def set_notice(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        n = m.text.replace("/setnotice ",""); await settings_col.update_one({"id": "config"}, {"$set": {"note": n}}, upsert=True); await m.answer("✅ নোটিশ সেট।")
-
-# ১০. /setmtg
-@dp.message(Command("setmtg"))
-async def set_mtg(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        try: val = m.text.split()[1]; await settings_col.update_one({"id": "config"}, {"$set": {"mtg": val}}, upsert=True); await m.answer(f"✅ Monetag ID সেট।")
-        except: pass
-
-# ১১. /seemtg
-@dp.message(Command("seemtg"))
-async def see_mtg(m: types.Message):
-    conf = await get_config(); await m.answer(f"📢 Monetag ID: `{conf.get('mtg')}`")
-
-# ১২. /setstp
-@dp.message(Command("setstp"))
-async def set_stp(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        try: v = int(m.text.split()[1]); await settings_col.update_one({"id": "config"}, {"$set": {"stp": v}}, upsert=True); await m.answer(f"✅ এড স্টেপ: {v}")
-        except: pass
-
-# ১৩. /dm (Delete Movie)
-@dp.message(Command("dm"))
-async def del_m(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        n = m.text.replace("/dm ",""); await content_col.delete_one({"name": n, "type": "movie"}); await m.answer(f"🗑 {n} ডিলিট হয়েছে।")
-
-# ১৪. /ds (Delete Series)
-@dp.message(Command("ds"))
-async def del_s(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        n = m.text.replace("/ds ",""); await content_col.delete_one({"name": n, "type": "series"}); await m.answer(f"🗑 {n} ডিলিট হয়েছে।")
-
-# ১৫. /dlall
-@dp.message(Command("dlall"))
-async def del_all(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        await content_col.delete_many({}); await file_store.delete_many({}); await m.answer("💥 সব ডাটা ডিলিট হয়েছে!")
-
-# ১৬. /stats
 @dp.message(Command("stats"))
 async def get_stats(m: types.Message):
     if m.from_user.id == OWNER_ID:
-        c = await content_col.count_documents({}); u = await user_col.count_documents({}); await m.answer(f"📊 পরিসংখ্যান:\nপোস্ট: {c}\nইউজার: {u}")
+        c = await content_col.count_documents({}); u = await user_col.count_documents({})
+        await m.answer(f"📊 পরিসংখ্যান:\nপোস্ট: {c}\nইউজার: {u}")
 
-# ১৭. /perpost
-@dp.message(Command("perpost"))
-async def set_per(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        try: v = int(m.text.split()[1]); await settings_col.update_one({"id": "config"}, {"$set": {"per": v}}, upsert=True); await m.answer(f"✅ পেজ লিমিট: {v}")
-        except: pass
-
-# ১৮. /notifi
-@dp.message(Command("notifi"))
-async def set_notif(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        try: ch = m.text.split()[1]; await notif_col.update_one({"id": ch}, {"$set": {"id": ch}}, upsert=True); await m.answer("✅ চ্যানেল যুক্ত হয়েছে।")
-        except: pass
-
-# ১৯. রিকোয়েস্ট সিস্টেম (Callback)
 @dp.callback_query(F.data == "req")
 async def req_cb(cb: types.CallbackQuery, state: FSMContext):
     await cb.message.answer("📝 মুভির নাম লিখে পাঠান:"); await state.set_state(ReqState.movie_name); await cb.answer()
 
 @dp.message(ReqState.movie_name)
 async def req_process(m: types.Message, state: FSMContext):
-    await bot.send_message(chat_id=OWNER_ID, text=f"🚨 **নতুন রিকোয়েস্ট!**\n👤: {m.from_user.full_name}\n🎬: **{m.text}**")
+    await bot.send_message(chat_id=OWNER_ID, text=f"🚨 রিকোয়েস্ট: {m.text}\n👤: {m.from_user.full_name}")
     await m.answer("✅ পাঠানো হয়েছে!"); await state.clear()
 
 # ==========================================
-# ৩. ওয়েব ডিজাইন এবং মিডিয়া সার্ভিং (ইমেজ ফিক্স)
+# ৩. ওয়েব সার্ভার এবং ডিজাইন
 # ==========================================
 
 @app.get("/media/{media_id}")
 async def serve_media(media_id: str):
-    """ডাটাবেস থেকে ইমেজ ফাইল সার্ভ করা"""
     media = await media_store.find_one({"media_id": media_id})
-    if media:
-        return Response(content=media['data'], media_type=media['mime'])
+    if media: return Response(content=media['data'], media_type=media['mime'])
     return Response(status_code=404)
 
 INDEX_HTML = """
@@ -323,11 +238,10 @@ INDEX_HTML = """
     <title>{{ conf.site_name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #050505; color: #fff; font-family: 'Segoe UI', sans-serif; }
+        body { background: #050505; color: #fff; }
         .notice { background: linear-gradient(90deg, #ff0055, #ffcc00); padding: 10px; text-align: center; color: #000; font-weight: bold; }
-        .movie-card { background: #111; border-radius: 12px; overflow: hidden; border: 1px solid #222; transition: 0.3s; margin-bottom: 12px; }
-        .movie-card:hover { transform: translateY(-5px); border-color: #ff0055; }
-        .movie-card img { width: 100%; height: 260px; object-fit: cover; background: #222; }
+        .movie-card { background: #111; border-radius: 12px; overflow: hidden; border: 1px solid #222; margin-bottom: 12px; }
+        .movie-card img { width: 100%; height: 260px; object-fit: cover; }
         .m-name { padding: 8px; font-size: 13px; text-align: center; font-weight: bold; min-height: 50px; }
     </style>
 </head>
@@ -362,20 +276,19 @@ DETAIL_HTML = """
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
     <style>
         body { background: #000; color: #fff; text-align: center; padding-top: 20px; }
-        .poster { width: 90%; max-width: 330px; border-radius: 15px; border: 2px solid #ff0055; box-shadow: 0 0 20px #ff0055; margin-bottom: 20px; }
-        .unlock-btn { display: block; background: linear-gradient(45deg, #ff0055, #ffcc00); color: #000; padding: 18px; border-radius: 12px; font-weight: bold; text-decoration: none; margin: 10px auto; max-width: 400px; cursor: pointer; }
+        .poster { width: 90%; max-width: 300px; border-radius: 15px; border: 2px solid #ff0055; margin-bottom: 20px; }
+        .unlock-btn { display: block; background: linear-gradient(45deg, #ff0055, #ffcc00); color: #000; padding: 15px; border-radius: 10px; font-weight: bold; text-decoration: none; margin: 10px auto; max-width: 400px; cursor: pointer; }
     </style>
 </head>
 <body>
     <img src="{{ item.poster }}" class="poster">
     <h3>{{ item.name }}</h3>
-    
     <div class="container py-4">
         {% if item.type == 'movie' %}
             {% for l in item.links %}
                 <div id="lock-{{ l.uid }}" class="unlock-btn" onclick="triggerAd('{{ l.uid }}')">🔓 UNLOCK FILE ({{ l.q }})</div>
                 <div id="box-{{ l.uid }}" style="display:none;">
-                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn btn-outline-info p-3 w-100 mb-3">📥 GET FILE FROM BOT</a>
+                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn btn-outline-info p-3 w-100 mb-3">📥 GET MOVIE</a>
                 </div>
             {% endfor %}
         {% else %}
@@ -387,7 +300,6 @@ DETAIL_HTML = """
             {% endfor %}
         {% endif %}
     </div>
-
     <script>
         function triggerAd(uid) {
             if (typeof show_{{ conf.mtg }} === 'function') { show_{{ conf.mtg }}(); }
@@ -400,10 +312,6 @@ DETAIL_HTML = """
 </html>
 """
 
-# ==========================================
-# ৪. সার্ভার মেইন ফাংশন
-# ==========================================
-
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, user_id: str = None):
     conf = await get_config()
@@ -411,7 +319,6 @@ async def home(request: Request, user_id: str = None):
         response = RedirectResponse(url="/")
         response.set_cookie(key="tg_user_id", value=user_id, max_age=31536000)
         return response
-    
     items = await content_col.find().sort("date", -1).to_list(100)
     return Template(INDEX_HTML).render(items=items, conf=conf)
 
@@ -422,9 +329,10 @@ async def detail(request: Request, id: str):
     if not item: return "Not Found"
     return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
 
-@app.on_event("startup")
-async def on_startup():
-    asyncio.create_task(dp.start_polling(bot))
+# ==========================================
+# ৪. মেইন এন্ট্রি পয়েন্ট
+# ==========================================
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    # প্রোডাকশনে uvicorn রান করার জন্য main:app ব্যবহার করা হয়েছে
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info")
