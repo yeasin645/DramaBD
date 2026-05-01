@@ -339,7 +339,7 @@ async def req_process(m: types.Message, state: FSMContext):
 
 
 # ==========================================
-# ৩. ওয়েব ডিজাইন (ইপিসোড টেক্স ফিক্স ও প্রিমিয়াম লাইটিং)
+# ৩. ওয়েব ডিজাইন (৪ কলাম গ্রিড + এড ফিক্স)
 # ==========================================
 
 INDEX_HTML = """
@@ -352,63 +352,37 @@ INDEX_HTML = """
     <style>
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; }
         .top-nav { background: #111; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; border-bottom: 2px solid #333; }
-        .logo { font-size: 24px; font-weight: 900; color: #fff; text-transform: uppercase; }
+        .logo { font-size: 22px; font-weight: 900; color: #fff; text-transform: uppercase; }
         .logo span { background: #ff0000; color: #fff; padding: 2px 8px; border-radius: 5px; margin-left: 5px; }
-        
-        .filters { display: flex; overflow-x: auto; padding: 10px 15px; gap: 10px; scrollbar-width: none; }
-        .filter-btn { background: #1a1a1a; color: #ccc; border: 1px solid #333; padding: 8px 20px; border-radius: 30px; white-space: nowrap; font-size: 14px; transition: 0.3s; }
-        .filter-btn.active { background: #ff0000; color: #fff; border-color: #ff0000; box-shadow: 0 0 15px #ff0000; }
-
-        .search-area { padding: 15px; }
-        .search-box { width: 100%; padding: 14px 25px; border-radius: 30px; border: 2px solid #ff0000; background: #111; color: #fff; outline: none; box-shadow: 0 0 10px rgba(255,0,0,0.3); }
-
         .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 15px; }
-        .movie-card { background: #111; border-radius: 15px; overflow: hidden; border: 1px solid #222; transition: 0.3s; position: relative; }
-        .movie-card:hover { transform: scale(1.02); border-color: #ff0000; box-shadow: 0 0 20px rgba(255,0,0,0.2); }
-        .movie-card img { width: 100%; height: 240px; object-fit: cover; }
-        
-        .badge-cat { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 5px; font-size: 11px; }
-        .badge-quality { position: absolute; top: 10px; right: 10px; background: #ff0000; padding: 4px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
-        
-        .m-name { padding: 12px; font-weight: 600; font-size: 15px; text-align: center; color: #eee; min-height: 50px; display: flex; align-items: center; justify-content: center; }
-        
-        .pagination .page-link { background: #111; border: 1px solid #333; color: #fff; margin: 0 5px; border-radius: 10px; }
-        .pagination .active .page-link { background: #ff0000; border-color: #ff0000; }
+        .movie-card { background: #111; border-radius: 12px; overflow: hidden; border: 1px solid #222; position: relative; }
+        .movie-card img { width: 100%; height: 220px; object-fit: cover; }
+        .badge-cat { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 3px 7px; border-radius: 4px; font-size: 10px; }
+        .badge-quality { position: absolute; top: 10px; right: 10px; background: #ff0000; padding: 3px 7px; border-radius: 4px; font-size: 10px; font-weight: bold; }
+        .m-name { padding: 10px; font-weight: 600; font-size: 14px; text-align: center; color: #eee; }
+        .search-area { padding: 15px; }
+        .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 2px solid #ff0000; background: #111; color: #fff; outline: none; }
     </style>
 </head>
 <body>
     <div class="top-nav">
         <button onclick="history.back()" class="btn btn-sm btn-outline-light">⬅ Back</button>
+        <div class="logo">Moviee <span>BD</span></div>
         <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
     </div>
 
-    <div class="header p-3 text-center">
-        <div class="logo">Moviee <span>BD</span></div>
-    </div>
-
-    <div class="filters">
-        <button class="filter-btn active" onclick="filterCat('all', this)">All Content</button>
-        {% set cats = [] %}
-        {% for i in all_cats_items %}{% if i.cat and i.cat not in cats %}{% set _ = cats.append(i.cat) %}{% endif %}{% endfor %}
-        {% for c in cats %}<button class="filter-btn" onclick="filterCat('{{ c }}', this)">{{ c }}</button>{% endfor %}
-    </div>
-
     <div class="search-area">
-        <input type="text" class="search-box" placeholder="মুভি বা ড্রামার নাম লিখুন..." onkeyup="searchMe(this.value)">
+        <input type="text" class="search-box" placeholder="সার্চ করুন..." onkeyup="searchMe(this.value)">
     </div>
 
     <div class="movie-grid" id="movieList">
         {% for i in items %}
-        <div class="movie-item" data-name="{{ i.name | lower }}" data-cat="{{ i.cat }}">
+        <div class="movie-item" data-name="{{ i.name | lower }}">
             <a href="/view/{{ i._id }}" class="text-decoration-none">
                 <div class="movie-card">
                     <img src="{{ i.poster }}" loading="lazy">
                     <div class="badge-cat">{{ i.cat }}</div>
-                    {% if i.type == 'movie' %}
-                        <div class="badge-quality">{{ i.quality }}</div>
-                    {% else %}
-                        <div class="badge-quality" style="background:#5d259e">{{ i.episodes | length }} EP</div>
-                    {% endif %}
+                    <div class="badge-quality">{% if i.type == 'movie' %}{{ i.quality }}{% else %}{{ i.episodes | length }} EP{% endif %}</div>
                     <div class="m-name">{{ i.name }}</div>
                 </div>
             </a>
@@ -416,21 +390,13 @@ INDEX_HTML = """
         {% endfor %}
     </div>
 
-    <nav class="mt-4 pb-4"><ul class="pagination justify-content-center">
-        {% if current_page > 1 %}<li class="page-item"><a class="page-link" href="/?page={{ current_page - 1 }}">Prev</a></li>{% endif %}
-        <li class="page-item active"><a class="page-link">{{ current_page }}</a></li>
-        {% if current_page < total_pages %}<li class="page-item"><a class="page-link" href="/?page={{ current_page + 1 }}">Next</a></li>{% endif %}
+    <nav class="pb-5"><ul class="pagination justify-content-center">
+        {% if current_page > 1 %}<li class="page-item"><a class="page-link bg-dark text-white" href="/?page={{ current_page - 1 }}">Prev</a></li>{% endif %}
+        <li class="page-item active"><a class="page-link bg-danger border-danger text-white">{{ current_page }}</a></li>
+        {% if current_page < total_pages %}<li class="page-item"><a class="page-link bg-dark text-white" href="/?page={{ current_page + 1 }}">Next</a></li>{% endif %}
     </ul></nav>
 
     <script>
-        function filterCat(c, b) {
-            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
-            b.classList.add('active');
-            document.querySelectorAll('.movie-item').forEach(m => {
-                if(c === 'all' || m.dataset.cat === c) m.style.display = 'block';
-                else m.style.display = 'none';
-            });
-        }
         function searchMe(v) {
             v = v.toLowerCase();
             document.querySelectorAll('.movie-item').forEach(m => {
@@ -451,38 +417,39 @@ DETAIL_HTML = """
     <title>{{ item.name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     
-    <!-- Monetag Dynamic SDK -->
+    <!-- Monetag SDK Script -->
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
     
     <style>
         body { background: #000; color: #fff; text-align: center; padding-bottom: 50px; }
         .top-nav { background: #111; padding: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
-        .poster { width: 90%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.6); margin: 25px auto; display: block; }
+        .poster { width: 90%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.5); margin: 25px auto; display: block; }
         
-        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 18px; box-shadow: 0 0 20px #ff0000; display: none; animation: glow 2s infinite; }
-        @keyframes glow { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 16px; box-shadow: 0 0 15px #ff0000; display: none; }
 
-        /* প্রিমিয়াম বাটন */
-        .btn-glow { 
-            position: relative; overflow: hidden; padding: 18px; width: 90%; margin: 15px auto; 
+        .btn-main { 
+            background: linear-gradient(45deg, #ff0000, #ff5555); padding: 18px; width: 90%; margin: 15px auto; 
             border-radius: 15px; border: none; font-weight: 800; font-size: 18px; color: #fff;
-            background: linear-gradient(45deg, #ff0000, #ff5555);
-            box-shadow: 0 0 25px rgba(255, 0, 0, 0.7);
-            transition: 0.4s; text-decoration: none; display: block;
+            box-shadow: 0 0 25px rgba(255, 0, 0, 0.6); display: block; text-decoration: none; transition: 0.3s;
         }
-        .btn-glow:active { transform: scale(0.95); }
 
-        /* ইপিসোর্ড গ্রিড ফিক্স (২ কলাম এবং বড় টেক্সট) */
-        .ep-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 15px; }
-        .btn-ep { 
-            padding: 22px 5px; border-radius: 12px; font-weight: 800; font-size: 16px; 
-            border: none; color: #fff; cursor: pointer; text-decoration: none; 
-            display: flex; align-items: center; justify-content: center; transition: 0.3s;
+        /* ৪ কলাম ইপিসোড গ্রিড */
+        .ep-grid { 
+            display: grid; 
+            grid-template-columns: repeat(4, 1fr); 
+            gap: 8px; 
+            padding: 15px; 
         }
-        .c1 { background: #e91e63; box-shadow: 0 0 15px rgba(233,30,99,0.5); } 
-        .c2 { background: #007bff; box-shadow: 0 0 15px rgba(0,123,255,0.5); } 
-        .c3 { background: #4caf50; box-shadow: 0 0 15px rgba(76,175,80,0.5); }
-        .get-btn { background: #ffc107; color: #000; box-shadow: 0 0 20px #ffc107; display: none; }
+        .btn-ep { 
+            padding: 12px 2px; border-radius: 8px; font-weight: 700; font-size: 11px; 
+            border: none; color: #fff; cursor: pointer; text-decoration: none; 
+            display: flex; align-items: center; justify-content: center; min-height: 45px;
+        }
+        .c1 { background: #e91e63; box-shadow: 0 0 8px #e91e63; } 
+        .c2 { background: #007bff; box-shadow: 0 0 8px #007bff; } 
+        .c3 { background: #4caf50; box-shadow: 0 0 8px #4caf50; }
+        .c4 { background: #673ab7; box-shadow: 0 0 8px #673ab7; }
+        .get-btn { background: #ffc107; color: #000; box-shadow: 0 0 15px #ffc107; display: none; }
     </style>
 </head>
 <body>
@@ -493,8 +460,7 @@ DETAIL_HTML = """
     </div>
 
     <img src="{{ item.poster }}" class="poster">
-    <h2 class="px-3" style="font-weight:900; letter-spacing: 1px;">{{ item.name }}</h2>
-    <p class="text-muted">{{ item.cat }} • {{ item.type | upper }}</p>
+    <h2 class="px-3" style="font-weight:900;">{{ item.name }}</h2>
 
     <div id="countdown-msg" class="timer-info"></div>
 
@@ -502,11 +468,11 @@ DETAIL_HTML = """
         {% if item.type == 'movie' %}
             {% for l in item.links %}
             <div id="box-{{ l.uid }}" class="px-3">
-                <button id="btn-{{ l.uid }}" class="btn-glow" onclick="startAd('{{ l.uid }}')">
+                <button id="btn-{{ l.uid }}" class="btn-main" onclick="startAd('{{ l.uid }}')">
                     🔓 UNLOCK {{ l.q }} FILE
                 </button>
                 <div id="get-{{ l.uid }}" style="display:none;">
-                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-glow" style="background:#00c853; box-shadow:0 0 25px #00c853;">
+                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-main" style="background:#00c853; box-shadow:0 0 25px #00c853;">
                         📥 GET NOW
                     </a>
                 </div>
@@ -516,14 +482,13 @@ DETAIL_HTML = """
             <div class="ep-grid">
             {% for e in item.episodes %}
                 <div id="box-{{ e.uid }}">
-                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3']|random }}" onclick="startAd('{{ e.uid }}')">
+                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3','c4']|random }}" onclick="startAd('{{ e.uid }}')">
                         Episode {{ "%02d"|format(loop.index) }}
                     </button>
-                    <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">DOWNLOAD</a>
+                    <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">GET</a>
                 </div>
             {% endfor %}
             </div>
-            <p style="color:#ffcc00; font-weight:bold; font-size:14px;">ইপিসোড এ ক্লিক করে এড দেখুন এবং আনলক করুন</p>
         {% endif %}
     </div>
 
@@ -542,10 +507,7 @@ DETAIL_HTML = """
             const itemStr = localStorage.getItem(key);
             if (!itemStr) return null;
             const item = JSON.parse(itemStr);
-            if (new Date().getTime() > item.expiry) { 
-                localStorage.removeItem(key); 
-                return null; 
-            }
+            if (new Date().getTime() > item.expiry) { localStorage.removeItem(key); return null; }
             return item;
         }
 
@@ -562,13 +524,8 @@ DETAIL_HTML = """
                     const secs = remaining % 60;
                     msgBox.style.display = 'block';
                     msgBox.innerHTML = `🔐 এটি ${mins} মি. ${secs} সে. পর পুনরায় লক হবে।`;
-                } else {
-                    msgBox.style.display = 'none';
-                    location.reload();
-                }
-            } else {
-                msgBox.style.display = 'none';
-            }
+                } else { msgBox.style.display = 'none'; location.reload(); }
+            } else { msgBox.style.display = 'none'; }
         }
 
         function checkPersistence() {
@@ -577,10 +534,7 @@ DETAIL_HTML = """
                 if (getLocal('unlocked_' + uid)) {
                     btn.style.display = 'none';
                     const getLink = document.getElementById('get-' + uid);
-                    if(getLink) {
-                        getLink.style.display = 'flex';
-                        getLink.style.width = '100%';
-                    }
+                    if(getLink) getLink.style.display = 'flex';
                 }
             });
         }
@@ -591,14 +545,17 @@ DETAIL_HTML = """
             const now = new Date().getTime();
             if (adStartedAt === 0) {
                 adStartedAt = now;
-                // Dynamically trigger Monetag Show function
-                const sdkFn = 'show_' + zoneId;
-                if (typeof window[sdkFn] === 'function') { 
-                    window[sdkFn](); 
+                // বিজ্ঞাপন নিশ্চিত করার জন্য Monetag SDK ফাংশন কল
+                const sdkFuncName = 'show_' + zoneId;
+                if (typeof window[sdkFuncName] === 'function') {
+                    window[sdkFuncName]();
                 } else {
-                    console.log("Ad script not loaded yet.");
+                    console.log("Ad SDK not ready.");
+                    alert("বিজ্ঞাপন লোড হচ্ছে, আবার চেষ্টা করুন।");
+                    location.reload();
+                    return;
                 }
-                alert("এডটি শুরু হয়েছে। কমপক্ষে " + adTimerSecs + " সেকেন্ড দেখে আবার বাটনে ক্লিক করুন।");
+                alert("এডটি চালু হয়েছে। কমপক্ষে " + adTimerSecs + " সেকেন্ড এডটি দেখুন, তারপর আবার বাটনে ক্লিক করুন।");
                 return;
             }
 
@@ -622,7 +579,7 @@ DETAIL_HTML = """
 """
 
 # ==========================================
-# ৪. মেইন এন্ট্রি পয়েন্ট ও রুট লজিক
+# ৪. মেইন এন্ট্রি পয়েন্ট
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, page: int = 1, user_id: str = None):
@@ -633,16 +590,11 @@ async def home(request: Request, page: int = 1, user_id: str = None):
         return response
     
     per_page = conf.get('per', 10)
-    top_items = await content_col.find().sort("views", -1).limit(5).to_list(5)
-    total_m = await content_col.count_documents({"type": "movie"})
-    total_s = await content_col.count_documents({"type": "series"})
     total_all = await content_col.count_documents({})
-    
     total_pages = (total_all + per_page - 1) // per_page
     items = await content_col.find().sort("date", -1).skip((page - 1) * per_page).limit(per_page).to_list(per_page)
-    all_cats_items = await content_col.find({}, {"cat": 1}).to_list(500)
     
-    return Template(INDEX_HTML).render(items=items, conf=conf, top_items=top_items, total_m=total_m, total_s=total_s, current_page=page, total_pages=total_pages, all_cats_items=all_cats_items)
+    return Template(INDEX_HTML).render(items=items, conf=conf, current_page=page, total_pages=total_pages)
 
 @app.get("/view/{id}", response_class=HTMLResponse)
 async def detail(id: str):
