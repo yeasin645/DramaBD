@@ -93,46 +93,33 @@ async def auto_delete_task(chat_id, message_id, minutes):
         try: await bot.delete_message(chat_id, message_id)
         except: pass
 
-# --- লাইফস্প্যান (Conflict Error ফিক্স করার জন্য) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # পুরোনো সেশন ক্লিয়ার করা
     await bot.delete_webhook(drop_pending_updates=True)
-    # মেনু বাটন সেট করা
     await bot.set_chat_menu_button(
         menu_button=MenuButtonWebApp(text="Watch Now 🎬", web_app=WebAppInfo(url=APP_URL))
     )
     polling_task = asyncio.create_task(dp.start_polling(bot))
     logging.info("বট পোলিং শুরু হয়েছে...")
     yield
-    # বন্ধ হওয়ার সময় ক্লিনিং
     polling_task.cancel()
     await bot.session.close()
 
 app = FastAPI(lifespan=lifespan)
 
 # ==========================================
-# ২. ১৯টি পূর্ণাঙ্গ কমান্ড লজিক (এক বিন্দুও বাদ নেই)
+# ২. কমান্ড লজিক (অক্ষত রাখা হয়েছে)
 # ==========================================
 
-# ১. /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, command: CommandObject):
     user_data = {"id": message.from_user.id, "name": message.from_user.full_name, "username": message.from_user.username, "date": datetime.now()}
     await user_col.update_one({"id": message.from_user.id}, {"$set": user_data}, upsert=True)
-    
     conf = await get_config()
     if command.args:
         f_data = await file_store.find_one({"unique_id": command.args})
         if f_data:
-            return await bot.copy_message(
-                chat_id=message.chat.id, 
-                from_chat_id=OWNER_ID, 
-                message_id=f_data['msg_id'], 
-                caption=f"🎬 মুভি: {f_data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}", 
-                protect_content=conf.get("protect", False)
-            )
-
+            return await bot.copy_message(chat_id=message.chat.id, from_chat_id=OWNER_ID, message_id=f_data['msg_id'], caption=f"🎬 মুভি: {f_data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}", protect_content=conf.get("protect", False))
     login_url = f"{APP_URL}/?user_id={message.from_user.id}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Watch Now (Premium Login)", url=login_url)],
@@ -141,7 +128,6 @@ async def cmd_start(message: types.Message, command: CommandObject):
     ])
     await message.answer_photo(photo=conf['logo'], caption=f"Hello {message.from_user.first_name}!\nWelcome to {conf['site_name']} ❤️🍿", reply_markup=kb)
 
-# ২. /movie
 @dp.message(Command("movie"))
 async def add_movie(m: types.Message, state: FSMContext):
     if m.from_user.id != OWNER_ID: return
@@ -167,7 +153,8 @@ async def m_quality(m: types.Message, state: FSMContext):
     if m.text and m.text.strip().casefold() == "done":
         data = await state.get_data()
         if not data.get('links'): return await m.answer("❌ কোনো ফাইল নেই!")
-        await content_col.insert_one({"type": "movie", **data, "date": datetime.now()})
+        # quality save for badge
+        await content_col.insert_one({"type": "movie", **data, "quality": data.get('cq'), "date": datetime.now()})
         conf = await get_config()
         post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"🎬 মুভি: {data['name']}\n📢 {PUBLIC_CHANNEL}")
         if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
@@ -184,7 +171,6 @@ async def m_file_store(m: types.Message, state: FSMContext):
     links = data.get('links', []); links.append({"q": data['cq'], "uid": uid}); await state.update_data(links=links)
     await m.answer(f"✅ {data['cq']} সেভ। পরের কোয়ালিটি দিন বা Done লিখুন।"); await state.set_state(MovieState.quality)
 
-# ৩. /series
 @dp.message(Command("series"))
 async def add_series(m: types.Message, state: FSMContext):
     if m.from_user.id != OWNER_ID: return
@@ -221,7 +207,6 @@ async def s_files_store(m: types.Message, state: FSMContext):
         eps = data.get('episodes', []); eps.append({"ep": ep_n, "uid": uid}); await state.update_data(episodes=eps)
         await m.answer(f"✅ {ep_n} সেভ। পরের এপিসোড পাঠান বা Done লিখুন।")
 
-# ৪. /protect
 @dp.message(Command("protect"))
 async def cmd_protect(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -229,7 +214,6 @@ async def cmd_protect(m: types.Message):
     await settings_col.update_one({"id": "config"}, {"$set": {"protect": ns}}, upsert=True)
     await m.answer(f"🔐 ফাইল প্রটেকশন এখন: **{'অন' if ns else 'অফ'}**", parse_mode="Markdown")
 
-# ৫. /logo
 @dp.message(Command("logo"))
 async def set_logo(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -239,7 +223,6 @@ async def set_logo(m: types.Message):
         await m.answer("✅ বটের লোগো আপডেট করা হয়েছে।")
     except: await m.answer("ব্যবহার: /logo [Image_URL]")
 
-# ৬. /autodlt
 @dp.message(Command("autodlt"))
 async def set_autodlt(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -249,7 +232,6 @@ async def set_autodlt(m: types.Message):
         await m.answer(f"✅ অটো ডিলিট সময়: {v} মিনিট।")
     except: await m.answer("ব্যবহার: /autodlt 10")
 
-# ৭. /autolock
 @dp.message(Command("autolock"))
 async def set_autolock(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -259,7 +241,6 @@ async def set_autolock(m: types.Message):
         await m.answer(f"✅ অটো লক সময়: {v} মিনিট।")
     except: await m.answer("ব্যবহার: /autolock 10")
 
-# ৮. /setname
 @dp.message(Command("setname"))
 async def set_name(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -267,7 +248,6 @@ async def set_name(m: types.Message):
     await settings_col.update_one({"id": "config"}, {"$set": {"site_name": n}}, upsert=True)
     await m.answer(f"✅ সাইটের নাম সেট করা হয়েছে: {n}")
 
-# ৯. /setnotice
 @dp.message(Command("setnotice"))
 async def set_notice(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -275,7 +255,6 @@ async def set_notice(m: types.Message):
     await settings_col.update_one({"id": "config"}, {"$set": {"note": n}}, upsert=True)
     await m.answer("✅ সাইট নোটিশ আপডেট হয়েছে।")
 
-# ১০. /setmtg
 @dp.message(Command("setmtg"))
 async def set_mtg(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -285,14 +264,12 @@ async def set_mtg(m: types.Message):
         await m.answer("✅ Monetag ID আপডেট হয়েছে।")
     except: await m.answer("ব্যবহার: /setmtg 123456")
 
-# ১১. /seemtg
 @dp.message(Command("seemtg"))
 async def see_mtg(m: types.Message):
     if m.from_user.id != OWNER_ID: return
     conf = await get_config()
     await m.answer(f"📢 বর্তমান Monetag ID: `{conf.get('mtg')}`")
 
-# ১২. /setstp
 @dp.message(Command("setstp"))
 async def set_stp(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -302,7 +279,6 @@ async def set_stp(m: types.Message):
         await m.answer(f"✅ এড স্টেপ সেট করা হয়েছে: {v}")
     except: await m.answer("ব্যবহার: /setstp 2")
 
-# ১৩. /dm
 @dp.message(Command("dm"))
 async def del_m(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -310,7 +286,6 @@ async def del_m(m: types.Message):
     res = await content_col.delete_one({"name": n, "type": "movie"})
     await m.answer(f"🗑 {n} ডিলিট করা হয়েছে।" if res.deleted_count else "❌ পাওয়া যায়নি।")
 
-# ১৪. /ds
 @dp.message(Command("ds"))
 async def del_s(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -318,20 +293,17 @@ async def del_s(m: types.Message):
     res = await content_col.delete_one({"name": n, "type": "series"})
     await m.answer(f"🗑 {n} ডিলিট করা হয়েছে।" if res.deleted_count else "❌ পাওয়া যায়নি।")
 
-# ১৫. /dlall
 @dp.message(Command("dlall"))
 async def del_all(m: types.Message):
     if m.from_user.id == OWNER_ID:
         await content_col.delete_many({}); await file_store.delete_many({}); await m.answer("💥 সব মুছে ফেলা হয়েছে!")
 
-# १६. /stats
 @dp.message(Command("stats"))
 async def get_stats(m: types.Message):
     if m.from_user.id == OWNER_ID:
         c = await content_col.count_documents({}); u = await user_col.count_documents({})
         await m.answer(f"📊 পরিসংখ্যান:\nপোস্ট: {c}\nইউজার: {u}")
 
-# ১৭. /perpost
 @dp.message(Command("perpost"))
 async def set_per(m: types.Message):
     if m.from_user.id == OWNER_ID:
@@ -340,7 +312,6 @@ async def set_per(m: types.Message):
             await m.answer(f"✅ পেজ লিমিট সেট: {v}")
         except: pass
 
-# ১৮. /notifi
 @dp.message(Command("notifi"))
 async def set_notif(m: types.Message):
     if m.from_user.id == OWNER_ID:
@@ -349,7 +320,6 @@ async def set_notif(m: types.Message):
             await m.answer(f"✅ চ্যানেল যুক্ত: {ch}")
         except: pass
 
-# ১৯. রিকোয়েস্ট
 @dp.callback_query(F.data == "req")
 async def req_cb(cb: types.CallbackQuery, state: FSMContext):
     await cb.message.answer("📝 মুভির নাম লিখে পাঠান:"); await state.set_state(ReqState.movie_name); await cb.answer()
@@ -359,7 +329,7 @@ async def req_p(m: types.Message, state: FSMContext):
     await bot.send_message(chat_id=OWNER_ID, text=f"🚨 রিকোয়েস্ট: {m.text}\n👤: {m.from_user.full_name}"); await m.answer("✅ পাঠানো হয়েছে!"); await state.clear()
 
 # ==========================================
-# ৩. ওয়েব ডিজাইন (Jackpot ডিজাইন + Search + Category)
+# ৩. প্রিমিয়াম ওয়েব ডিজাইন (স্লাইডার, পেজিনেশন ও ব্যাজসহ)
 # ==========================================
 
 @app.get("/media/{media_id}")
@@ -375,24 +345,40 @@ INDEX_HTML = """
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ conf.site_name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <style>
         body { background: #fff; color: #000; font-family: 'Segoe UI', sans-serif; }
         .header { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #eee; }
         .logo { font-size: 20px; font-weight: bold; }
         .logo span { background: red; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
+        .stats-bar { padding: 10px 15px; font-size: 13px; color: #666; background: #f9f9f9; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
         
         .filters { display: flex; overflow-x: auto; padding: 10px 15px; gap: 10px; scrollbar-width: none; }
-        .filter-btn { background: #f0f0f0; border: none; padding: 8px 18px; border-radius: 20px; white-space: nowrap; font-size: 14px; cursor: pointer; font-weight: 500; }
+        .filter-btn { background: #f0f0f0; border: none; padding: 8px 18px; border-radius: 20px; white-space: nowrap; font-size: 14px; cursor: pointer; }
         .filter-btn.active { background: #000; color: #fff; }
+
+        /* স্লাইডার */
+        .carousel-item img { height: 180px; object-fit: cover; border-radius: 15px; }
+        .carousel-caption { background: rgba(0,0,0,0.5); border-radius: 10px; padding: 5px; }
 
         .search-area { padding: 10px 15px; }
         .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 2px solid #5d259e; outline: none; font-size: 15px; }
 
-        .movie-grid { padding: 10px; }
-        .movie-card { margin-bottom: 20px; border-radius: 15px; overflow: hidden; border: 3px solid #ffcc00; position: relative; transition: 0.3s; }
-        .movie-card img { width: 100%; height: auto; display: block; }
-        .mb-badge { position: absolute; bottom: 45px; left: 10px; background: #fff; color: red; font-size: 10px; padding: 2px 5px; border-radius: 4px; font-weight: bold; }
-        .m-name { padding: 10px; font-weight: bold; font-size: 14px; color: #333; }
+        /* গ্রিড (২টি করে) */
+        .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 10px; }
+        .movie-card { border-radius: 15px; overflow: hidden; border: 2px solid #ffcc00; position: relative; }
+        .movie-card img { width: 100%; height: 230px; object-fit: cover; }
+        
+        /* ব্যাজসমূহ */
+        .badge-cat { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.7); color: #fff; font-size: 10px; padding: 3px 7px; border-radius: 5px; }
+        .badge-quality { position: absolute; top: 8px; right: 8px; background: red; color: #fff; font-size: 10px; padding: 3px 7px; border-radius: 5px; font-weight: bold; }
+        .badge-ep { position: absolute; bottom: 50px; right: 8px; background: #5d259e; color: #fff; font-size: 10px; padding: 3px 7px; border-radius: 5px; }
+        
+        .m-name { padding: 10px; font-weight: bold; font-size: 14px; color: #333; text-align: center; min-height: 45px; display: flex; align-items: center; justify-content: center; }
+        
+        .pagination { justify-content: center; margin-top: 20px; gap: 5px; }
+        .page-link { border-radius: 50% !important; color: #000; border: 1px solid #eee; width: 35px; height: 35px; display: flex; align-items: center; justify-content: center; }
+        .page-item.active .page-link { background: #000; border-color: #000; }
     </style>
 </head>
 <body>
@@ -400,11 +386,30 @@ INDEX_HTML = """
         <div class="logo">Moviee <span>BD</span></div>
         <div style="width:35px;height:35px;background:#eee;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px">YA</div>
     </div>
+    
+    <div class="stats-bar">
+        <span>🎬 Movies: {{ total_m }}</span>
+        <span>📺 Series: {{ total_s }}</span>
+    </div>
+
+    <!-- টপ ভিউ স্লাইডার -->
+    <div class="container mt-2">
+        <div id="topSlider" class="carousel slide" data-bs-ride="carousel">
+            <div class="carousel-inner">
+                {% for t in top_items %}
+                <div class="carousel-item {% if loop.first %}active{% endif %}">
+                    <a href="/view/{{ t._id }}"><img src="{{ t.poster }}" class="d-block w-100"></a>
+                    <div class="carousel-caption"><h6>{{ t.name }}</h6></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
 
     <div class="filters">
         <button class="filter-btn active" onclick="filterCat('all', this)">All</button>
         {% set cats = [] %}
-        {% for i in items %}{% if i.cat and i.cat not in cats %}{% set _ = cats.append(i.cat) %}{% endif %}{% endfor %}
+        {% for i in all_cats_items %}{% if i.cat and i.cat not in cats %}{% set _ = cats.append(i.cat) %}{% endif %}{% endfor %}
         {% for c in cats %}<button class="filter-btn" onclick="filterCat('{{ c }}', this)">{{ c }}</button>{% endfor %}
     </div>
 
@@ -416,15 +421,37 @@ INDEX_HTML = """
         {% for i in items %}
         <div class="movie-item" data-name="{{ i.name | lower }}" data-cat="{{ i.cat }}">
             <a href="/view/{{ i._id }}" class="text-decoration-none">
-                <div class="movie-card" style="border-color: {{ ['#ff0000','#00ff00','#0000ff','#ffcc00','#ff00ff'] | random }}">
+                <div class="movie-card" style="border-color: {{ ['#ff0000','#00ff00','#0000ff','#ffcc00','#5d259e'] | random }}">
                     <img src="{{ i.poster }}" loading="lazy">
-                    <div class="mb-badge">MB</div>
+                    <div class="badge-cat">{{ i.cat }}</div>
+                    {% if i.type == 'movie' %}
+                        <div class="badge-quality">{{ i.quality }}</div>
+                    {% else %}
+                        <div class="badge-ep">{{ i.episodes | length }} EP</div>
+                    {% endif %}
                     <div class="m-name">{{ i.name }}</div>
                 </div>
             </a>
         </div>
         {% endfor %}
     </div>
+
+    <!-- পেজিনেশন -->
+    <nav>
+      <ul class="pagination">
+        {% if current_page > 1 %}
+        <li class="page-item"><a class="page-link" href="/?page={{ current_page - 1 }}">Prev</a></li>
+        {% endif %}
+        {% for p in range(1, total_pages + 1) %}
+        <li class="page-item {% if p == current_page %}active{% endif %}">
+            <a class="page-link" href="/?page={{ p }}">{{ p }}</a>
+        </li>
+        {% endfor %}
+        {% if current_page < total_pages %}
+        <li class="page-item"><a class="page-link" href="/?page={{ current_page + 1 }}">Next</a></li>
+        {% endif %}
+      </ul>
+    </nav>
 
     <script>
         function filterCat(c, b) {
@@ -457,65 +484,123 @@ DETAIL_HTML = """
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
     <style>
         body { background: #000; color: #fff; text-align: center; padding: 20px; }
-        .poster { width: 100%; max-width: 350px; border-radius: 20px; border: 4px solid #00ff00; }
-        .btn-step { background: linear-gradient(45deg, #5d259e, #a020f0); color: #fff; padding: 18px; border-radius: 12px; margin: 15px auto; max-width: 400px; font-weight: bold; cursor: pointer; border: none; width: 100%; font-size: 16px; }
+        .poster { width: 100%; max-width: 350px; border-radius: 20px; border: 4px solid #00ff00; box-shadow: 0 0 20px #00ff00; }
+        .btn-step { background: linear-gradient(45deg, #5d259e, #a020f0); color: #fff; padding: 18px; border-radius: 12px; margin: 15px auto; max-width: 400px; font-weight: bold; cursor: pointer; border: none; width: 100%; font-size: 16px; display: block; text-decoration: none; }
     </style>
 </head>
 <body>
-    <img src="{{ item.poster }}" class="poster" onerror="this.src='https://telegra.ph/file/0f2e825a07530467776d5.jpg'">
+    <img src="{{ item.poster }}" class="poster">
     <h3 class="my-3">{{ item.name }}</h3>
 
     <div id="unlock-section">
         {% if item.type == 'movie' %}{% for l in item.links %}
-            <button id="btn-{{ l.uid }}" class="btn-step" onclick="handleStep('{{ l.uid }}')">🔓 UNLOCK FILE (Step 1/{{ conf.stp }})</button>
-            <div id="get-{{ l.uid }}" style="display:none;"><a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn btn-primary btn-lg w-100 p-3">📥 GET MOVIE FILE</a></div>
+            <div id="box-{{ l.uid }}">
+                <button id="btn-{{ l.uid }}" class="btn-step" onclick="doStep('{{ l.uid }}')">🔓 UNLOCK FILE (Step 1/{{ conf.stp }})</button>
+                <div id="get-{{ l.uid }}" style="display:none;"><a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn btn-primary btn-lg w-100 p-3">📥 GET MOVIE ({{ l.q }})</a></div>
+            </div>
         {% endfor %}{% else %}{% for e in item.episodes %}
-            <button id="btn-{{ e.uid }}" class="btn-step" onclick="handleStep('{{ e.uid }}')">🔓 UNLOCK {{ e.ep }} (Step 1/{{ conf.stp }})</button>
-            <div id="get-{{ e.uid }}" style="display:none;"><a href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn btn-primary btn-lg w-100 p-3">📥 GET {{ e.ep }}</a></div>
+            <div id="box-{{ e.uid }}">
+                <button id="btn-{{ e.uid }}" class="btn-step" onclick="doStep('{{ e.uid }}')">🔓 UNLOCK {{ e.ep }} (Step 1/{{ conf.stp }})</button>
+                <div id="get-{{ e.uid }}" style="display:none;"><a href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn btn-primary btn-lg w-100 p-3">📥 GET {{ e.ep }}</a></div>
+            </div>
         {% endfor %}{% endif %}
     </div>
 
     <script>
-        let currentSteps = {};
+        const autolock = {{ conf.autolock }};
         const maxSteps = {{ conf.stp }};
-        function handleStep(uid) {
-            if(!currentSteps[uid]) currentSteps[uid] = 1;
+
+        function setLocal(key, val, minutes) {
+            const now = new Date();
+            const item = { value: val, expiry: now.getTime() + (minutes * 60 * 1000) };
+            localStorage.setItem(key, JSON.stringify(item));
+        }
+
+        function getLocal(key) {
+            const itemStr = localStorage.getItem(key);
+            if (!itemStr) return null;
+            const item = JSON.parse(itemStr);
+            const now = new Date();
+            if (now.getTime() > item.expiry) {
+                localStorage.removeItem(key);
+                return null;
+            }
+            return item.value;
+        }
+
+        function checkPersistence() {
+            document.querySelectorAll('[id^="btn-"]').forEach(btn => {
+                const uid = btn.id.replace('btn-', '');
+                if (getLocal('unlocked_' + uid)) {
+                    btn.style.display = 'none';
+                    document.getElementById('get-' + uid).style.display = 'block';
+                }
+            });
+        }
+
+        let currentSteps = {};
+        function doStep(uid) {
+            if (!currentSteps[uid]) currentSteps[uid] = 1;
             if (typeof show_{{ conf.mtg }} === 'function') { show_{{ conf.mtg }}(); }
             
-            if(currentSteps[uid] >= maxSteps) {
-                document.getElementById('btn-'+uid).style.display = 'none';
-                document.getElementById('get-'+uid).style.display = 'block';
+            if (currentSteps[uid] >= maxSteps) {
+                setLocal('unlocked_' + uid, 'true', autolock);
+                document.getElementById('btn-' + uid).style.display = 'none';
+                document.getElementById('get-' + uid).style.display = 'block';
             } else {
                 currentSteps[uid]++;
-                document.getElementById('btn-'+uid).innerText = `🔓 UNLOCK (Step ${currentSteps[uid]}/${maxSteps})`;
+                document.getElementById('btn-' + uid).innerText = `🔓 UNLOCK (Step ${currentSteps[uid]}/${maxSteps})`;
             }
         }
+        window.onload = checkPersistence;
     </script>
     <br><a href="/" class="btn btn-dark">Back to Home</a>
 </body>
 </html>
 """
 
-# --- রুটস ---
+# --- রুট লজিক ---
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request, user_id: str = None):
+async def home(request: Request, page: int = 1, user_id: str = None):
     conf = await get_config()
     if user_id:
         response = RedirectResponse(url="/")
         response.set_cookie(key="tg_user_id", value=user_id, max_age=31536000)
         return response
-    items = await content_col.find().sort("date", -1).to_list(100)
-    return Template(INDEX_HTML).render(items=items, conf=conf)
+    
+    per_page = conf.get('per', 10)
+    
+    # স্লাইডার: টপ ৫ ভিউ
+    top_items = await content_col.find().sort("views", -1).limit(5).to_list(5)
+    
+    # কাউন্ট
+    total_m = await content_col.count_documents({"type": "movie"})
+    total_s = await content_col.count_documents({"type": "series"})
+    total_all = await content_col.count_documents({})
+    
+    # পেজিনেশন
+    total_pages = (total_all + per_page - 1) // per_page
+    items = await content_col.find().sort("date", -1).skip((page - 1) * per_page).limit(per_page).to_list(per_page)
+    
+    all_cats_items = await content_col.find({}, {"cat": 1}).to_list(500)
+    
+    return Template(INDEX_HTML).render(
+        items=items, conf=conf, top_items=top_items, 
+        total_m=total_m, total_s=total_s,
+        current_page=page, total_pages=total_pages,
+        all_cats_items=all_cats_items
+    )
 
 @app.get("/view/{id}", response_class=HTMLResponse)
 async def detail(id: str):
-    item = await content_col.find_one({"_id": ObjectId(id)}); conf = await get_config()
+    await content_col.update_one({"_id": ObjectId(id)}, {"$inc": {"views": 1}})
+    item = await content_col.find_one({"_id": ObjectId(id)})
+    conf = await get_config()
     if not item: return "Not Found"
     return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
 
 # ==========================================
-# ৪. মেইন এন্ট্রি পয়েন্ট (Conflict ফিক্সড)
+# ৪. মেইন এন্ট্রি পয়েন্ট
 # ==========================================
 if __name__ == "__main__":
-    # workers=1 নিশ্চিত করে যে শুধুমাত্র একটি প্রসেস চালু হবে, এতে Conflict Error আসবে না
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info", workers=1)
