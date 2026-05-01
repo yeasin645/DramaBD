@@ -109,7 +109,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # ==========================================
-# ২. টেলিগ্রাম কমান্ডস (সকল ১৯+ কমান্ড অক্ষত)
+# ২. টেলিগ্রাম কমান্ডস (সকল ১৯টি কমান্ড অক্ষত)
 # ==========================================
 
 @dp.message(Command("start"))
@@ -339,7 +339,7 @@ async def req_process(m: types.Message, state: FSMContext):
 
 
 # ==========================================
-# ৩. উন্নত ওয়েব ডিজাইন (Lighting Buttons + Timer)
+# ৩. ওয়েব ডিজাইন (ইপিসোড টেক্স ফিক্স ও প্রিমিয়াম লাইটিং)
 # ==========================================
 
 INDEX_HTML = """
@@ -350,30 +350,29 @@ INDEX_HTML = """
     <title>{{ conf.site_name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #0f0f0f; color: #fff; font-family: 'Segoe UI', sans-serif; }
-        .top-nav { background: #1a1a1a; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; border-bottom: 2px solid #333; }
-        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #111; }
+        body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; }
+        .top-nav { background: #111; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; border-bottom: 2px solid #333; }
         .logo { font-size: 24px; font-weight: 900; color: #fff; text-transform: uppercase; }
         .logo span { background: #ff0000; color: #fff; padding: 2px 8px; border-radius: 5px; margin-left: 5px; }
         
         .filters { display: flex; overflow-x: auto; padding: 10px 15px; gap: 10px; scrollbar-width: none; }
-        .filter-btn { background: #222; color: #ccc; border: 1px solid #444; padding: 8px 20px; border-radius: 30px; white-space: nowrap; font-size: 14px; transition: 0.3s; }
-        .filter-btn.active { background: #ff0000; color: #fff; border-color: #ff0000; box-shadow: 0 0 10px #ff0000; }
+        .filter-btn { background: #1a1a1a; color: #ccc; border: 1px solid #333; padding: 8px 20px; border-radius: 30px; white-space: nowrap; font-size: 14px; transition: 0.3s; }
+        .filter-btn.active { background: #ff0000; color: #fff; border-color: #ff0000; box-shadow: 0 0 15px #ff0000; }
 
         .search-area { padding: 15px; }
-        .search-box { width: 100%; padding: 14px 25px; border-radius: 30px; border: 2px solid #ff0000; background: #1a1a1a; color: #fff; outline: none; box-shadow: 0 0 15px rgba(255,0,0,0.2); }
+        .search-box { width: 100%; padding: 14px 25px; border-radius: 30px; border: 2px solid #ff0000; background: #111; color: #fff; outline: none; box-shadow: 0 0 10px rgba(255,0,0,0.3); }
 
         .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 15px; }
-        .movie-card { background: #1a1a1a; border-radius: 15px; overflow: hidden; border: 1px solid #333; transition: 0.3s; position: relative; }
-        .movie-card:hover { transform: scale(1.02); border-color: #ff0000; }
+        .movie-card { background: #111; border-radius: 15px; overflow: hidden; border: 1px solid #222; transition: 0.3s; position: relative; }
+        .movie-card:hover { transform: scale(1.02); border-color: #ff0000; box-shadow: 0 0 20px rgba(255,0,0,0.2); }
         .movie-card img { width: 100%; height: 240px; object-fit: cover; }
         
         .badge-cat { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 5px; font-size: 11px; }
         .badge-quality { position: absolute; top: 10px; right: 10px; background: #ff0000; padding: 4px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
         
-        .m-name { padding: 12px; font-weight: 600; font-size: 15px; text-align: center; color: #eee; }
+        .m-name { padding: 12px; font-weight: 600; font-size: 15px; text-align: center; color: #eee; min-height: 50px; display: flex; align-items: center; justify-content: center; }
         
-        .pagination .page-link { background: #222; border: 1px solid #444; color: #fff; margin: 0 5px; border-radius: 5px; }
+        .pagination .page-link { background: #111; border: 1px solid #333; color: #fff; margin: 0 5px; border-radius: 10px; }
         .pagination .active .page-link { background: #ff0000; border-color: #ff0000; }
     </style>
 </head>
@@ -383,9 +382,8 @@ INDEX_HTML = """
         <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
     </div>
 
-    <div class="header">
+    <div class="header p-3 text-center">
         <div class="logo">Moviee <span>BD</span></div>
-        <div style="width:40px;height:40px;background:#333;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid #ff0000;">🎬</div>
     </div>
 
     <div class="filters">
@@ -396,7 +394,7 @@ INDEX_HTML = """
     </div>
 
     <div class="search-area">
-        <input type="text" class="search-box" placeholder="মুভি বা সিরিজের নাম লিখুন..." onkeyup="searchMe(this.value)">
+        <input type="text" class="search-box" placeholder="মুভি বা ড্রামার নাম লিখুন..." onkeyup="searchMe(this.value)">
     </div>
 
     <div class="movie-grid" id="movieList">
@@ -418,7 +416,7 @@ INDEX_HTML = """
         {% endfor %}
     </div>
 
-    <nav class="mt-4"><ul class="pagination justify-content-center">
+    <nav class="mt-4 pb-4"><ul class="pagination justify-content-center">
         {% if current_page > 1 %}<li class="page-item"><a class="page-link" href="/?page={{ current_page - 1 }}">Prev</a></li>{% endif %}
         <li class="page-item active"><a class="page-link">{{ current_page }}</a></li>
         {% if current_page < total_pages %}<li class="page-item"><a class="page-link" href="/?page={{ current_page + 1 }}">Next</a></li>{% endif %}
@@ -452,45 +450,39 @@ DETAIL_HTML = """
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ item.name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Monetag SDK -->
+    
+    <!-- Monetag Dynamic SDK -->
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
+    
     <style>
         body { background: #000; color: #fff; text-align: center; padding-bottom: 50px; }
         .top-nav { background: #111; padding: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
-        .poster { width: 90%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.5); margin: 20px auto; display: block; }
+        .poster { width: 90%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.6); margin: 25px auto; display: block; }
         
-        /* এনিমেটেড টাইমার বক্স */
-        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 18px; box-shadow: 0 0 15px #ff0000; display: none; animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 18px; box-shadow: 0 0 20px #ff0000; display: none; animation: glow 2s infinite; }
+        @keyframes glow { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
 
-        /* লাইটিং বাটন ডিজাইন */
-        .btn-premium { 
+        /* প্রিমিয়াম বাটন */
+        .btn-glow { 
             position: relative; overflow: hidden; padding: 18px; width: 90%; margin: 15px auto; 
             border-radius: 15px; border: none; font-weight: 800; font-size: 18px; color: #fff;
             background: linear-gradient(45deg, #ff0000, #ff5555);
-            box-shadow: 0 0 20px rgba(255, 0, 0, 0.6);
+            box-shadow: 0 0 25px rgba(255, 0, 0, 0.7);
             transition: 0.4s; text-decoration: none; display: block;
         }
-        .btn-premium::before {
-            content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
-            background: rgba(255,255,255,0.2); transform: rotate(45deg);
-            transition: 0.5s; pointer-events: none;
-        }
-        .btn-premium:active { transform: scale(0.95); }
+        .btn-glow:active { transform: scale(0.95); }
 
-        /* বড় ইপিসোড গ্রিড */
-        .ep-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 15px; }
+        /* ইপিসোর্ড গ্রিড ফিক্স (২ কলাম এবং বড় টেক্সট) */
+        .ep-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 15px; }
         .btn-ep { 
-            padding: 20px 5px; border-radius: 12px; font-weight: bold; font-size: 14px; 
-            border: 2px solid transparent; color: #fff; cursor: pointer; text-decoration: none; 
+            padding: 22px 5px; border-radius: 12px; font-weight: 800; font-size: 16px; 
+            border: none; color: #fff; cursor: pointer; text-decoration: none; 
             display: flex; align-items: center; justify-content: center; transition: 0.3s;
         }
-        .c1 { background: #007bff; box-shadow: 0 0 10px #007bff; } 
-        .c2 { background: #e91e63; box-shadow: 0 0 10px #e91e63; } 
-        .c3 { background: #4caf50; box-shadow: 0 0 10px #4caf50; }
-        .get-btn { background: #ffc107; color: #000; box-shadow: 0 0 15px #ffc107; display: none; }
-
-        .unlock-msg { color: #ffcc00; margin-top: 10px; font-size: 14px; }
+        .c1 { background: #e91e63; box-shadow: 0 0 15px rgba(233,30,99,0.5); } 
+        .c2 { background: #007bff; box-shadow: 0 0 15px rgba(0,123,255,0.5); } 
+        .c3 { background: #4caf50; box-shadow: 0 0 15px rgba(76,175,80,0.5); }
+        .get-btn { background: #ffc107; color: #000; box-shadow: 0 0 20px #ffc107; display: none; }
     </style>
 </head>
 <body>
@@ -501,22 +493,21 @@ DETAIL_HTML = """
     </div>
 
     <img src="{{ item.poster }}" class="poster">
-    <h2 class="px-3" style="font-weight:800;">{{ item.name }}</h2>
+    <h2 class="px-3" style="font-weight:900; letter-spacing: 1px;">{{ item.name }}</h2>
     <p class="text-muted">{{ item.cat }} • {{ item.type | upper }}</p>
 
-    <!-- টাইমার ডিসপ্লে -->
     <div id="countdown-msg" class="timer-info"></div>
 
     <div id="unlock-section">
         {% if item.type == 'movie' %}
             {% for l in item.links %}
             <div id="box-{{ l.uid }}" class="px-3">
-                <button id="btn-{{ l.uid }}" class="btn-premium" onclick="startAd('{{ l.uid }}')">
+                <button id="btn-{{ l.uid }}" class="btn-glow" onclick="startAd('{{ l.uid }}')">
                     🔓 UNLOCK {{ l.q }} FILE
                 </button>
                 <div id="get-{{ l.uid }}" style="display:none;">
-                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-premium" style="background:#00c853; box-shadow:0 0 25px #00c853;">
-                        📥 DOWNLOAD / WATCH NOW
+                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-glow" style="background:#00c853; box-shadow:0 0 25px #00c853;">
+                        📥 GET NOW
                     </a>
                 </div>
             </div>
@@ -526,13 +517,13 @@ DETAIL_HTML = """
             {% for e in item.episodes %}
                 <div id="box-{{ e.uid }}">
                     <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3']|random }}" onclick="startAd('{{ e.uid }}')">
-                        EP - {{ loop.index }}
+                        Episode {{ "%02d"|format(loop.index) }}
                     </button>
-                    <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">GET</a>
+                    <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">DOWNLOAD</a>
                 </div>
             {% endfor %}
             </div>
-            <p class="unlock-msg">যেকোনো একটি এপিসোডে ক্লিক করে আনলক করুন</p>
+            <p style="color:#ffcc00; font-weight:bold; font-size:14px;">ইপিসোড এ ক্লিক করে এড দেখুন এবং আনলক করুন</p>
         {% endif %}
     </div>
 
@@ -570,7 +561,7 @@ DETAIL_HTML = """
                     const mins = Math.floor(remaining / 60);
                     const secs = remaining % 60;
                     msgBox.style.display = 'block';
-                    msgBox.innerHTML = `🔐 এটি ${mins}মি. ${secs}সে. পর লক হবে।`;
+                    msgBox.innerHTML = `🔐 এটি ${mins} মি. ${secs} সে. পর পুনরায় লক হবে।`;
                 } else {
                     msgBox.style.display = 'none';
                     location.reload();
@@ -586,7 +577,10 @@ DETAIL_HTML = """
                 if (getLocal('unlocked_' + uid)) {
                     btn.style.display = 'none';
                     const getLink = document.getElementById('get-' + uid);
-                    if(getLink) getLink.style.display = 'flex';
+                    if(getLink) {
+                        getLink.style.display = 'flex';
+                        getLink.style.width = '100%';
+                    }
                 }
             });
         }
@@ -597,19 +591,20 @@ DETAIL_HTML = """
             const now = new Date().getTime();
             if (adStartedAt === 0) {
                 adStartedAt = now;
-                // Monetag function call dynamically using zoneId
-                if (typeof window['show_' + zoneId] === 'function') { 
-                    window['show_' + zoneId](); 
+                // Dynamically trigger Monetag Show function
+                const sdkFn = 'show_' + zoneId;
+                if (typeof window[sdkFn] === 'function') { 
+                    window[sdkFn](); 
                 } else {
-                    console.log("Ad SDK not ready, retrying...");
+                    console.log("Ad script not loaded yet.");
                 }
-                alert("অ্যাড ওপেন হয়েছে! কমপক্ষে " + adTimerSecs + " সেকেন্ড দেখে আবার বাটনে ক্লিক করুন।");
+                alert("এডটি শুরু হয়েছে। কমপক্ষে " + adTimerSecs + " সেকেন্ড দেখে আবার বাটনে ক্লিক করুন।");
                 return;
             }
 
             const elapsed = (now - adStartedAt) / 1000;
             if (elapsed < adTimerSecs) {
-                alert("দয়া করে অ্যাডটি সম্পূর্ণ দেখুন! আরও " + Math.round(adTimerSecs - elapsed) + " সেকেন্ড বাকি।");
+                alert("দয়া করে এডটি সম্পূর্ণ দেখুন! আরও " + Math.round(adTimerSecs - elapsed) + " সেকেন্ড বাকি।");
                 return;
             }
 
@@ -627,7 +622,7 @@ DETAIL_HTML = """
 """
 
 # ==========================================
-# ৪. রুট লজিক
+# ৪. মেইন এন্ট্রি পয়েন্ট ও রুট লজিক
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, page: int = 1, user_id: str = None):
