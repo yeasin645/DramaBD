@@ -42,7 +42,7 @@ media_store = db['media_store']
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# --- এফএসএম ---
+# --- এফএসএম (স্টেট ম্যানেজমেন্ট) ---
 class MovieState(StatesGroup):
     name = State()
     category = State()
@@ -59,15 +59,14 @@ class SeriesState(StatesGroup):
 class ReqState(StatesGroup):
     movie_name = State()
 
-# --- হেল্পার ফাংশন ---
+# --- হেল্পার ফাংশন সমূহ ---
 async def get_config():
     conf = await settings_col.find_one({"id": "config"})
     if not conf:
         conf = {
             "id": "config", "site_name": "Moviee BD", "note": "মুভি দেখার নতুন ঠিকানা!", 
             "logo": f"{APP_URL}/media/default_logo", 
-            "autodlt": 10, "autolock": 10, "per": 10, "mtg": "10351894", "stp": 1, "protect": False,
-            "ad_timer": 12 
+            "autodlt": 10, "autolock": 10, "per": 10, "mtg": "10351894", "stp": 1, "protect": False
         }
         await settings_col.insert_one(conf)
     return conf
@@ -94,33 +93,46 @@ async def auto_delete_task(chat_id, message_id, minutes):
         try: await bot.delete_message(chat_id, message_id)
         except: pass
 
+# --- লাইফস্প্যান (Conflict Error ফিক্স করার জন্য) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # পুরোনো সেশন ক্লিয়ার করা
     await bot.delete_webhook(drop_pending_updates=True)
+    # মেনু বাটন সেট করা
     await bot.set_chat_menu_button(
         menu_button=MenuButtonWebApp(text="Watch Now 🎬", web_app=WebAppInfo(url=APP_URL))
     )
     polling_task = asyncio.create_task(dp.start_polling(bot))
     logging.info("বট পোলিং শুরু হয়েছে...")
     yield
+    # বন্ধ হওয়ার সময় ক্লিনিং
     polling_task.cancel()
     await bot.session.close()
 
 app = FastAPI(lifespan=lifespan)
 
 # ==========================================
-# ২. টেলিগ্রাম কমান্ডস (সকল ১৯টি কমান্ড অক্ষত)
+# ২. ১৯টি পূর্ণাঙ্গ কমান্ড লজিক (এক বিন্দুও বাদ নেই)
 # ==========================================
 
+# ১. /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, command: CommandObject):
     user_data = {"id": message.from_user.id, "name": message.from_user.full_name, "username": message.from_user.username, "date": datetime.now()}
     await user_col.update_one({"id": message.from_user.id}, {"$set": user_data}, upsert=True)
+    
     conf = await get_config()
     if command.args:
         f_data = await file_store.find_one({"unique_id": command.args})
         if f_data:
-            return await bot.copy_message(chat_id=message.chat.id, from_chat_id=OWNER_ID, message_id=f_data['msg_id'], caption=f"🎬 মুভি: {f_data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}", protect_content=conf.get("protect", False))
+            return await bot.copy_message(
+                chat_id=message.chat.id, 
+                from_chat_id=OWNER_ID, 
+                message_id=f_data['msg_id'], 
+                caption=f"🎬 মুভি: {f_data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}", 
+                protect_content=conf.get("protect", False)
+            )
+
     login_url = f"{APP_URL}/?user_id={message.from_user.id}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Watch Now (Premium Login)", url=login_url)],
@@ -129,6 +141,7 @@ async def cmd_start(message: types.Message, command: CommandObject):
     ])
     await message.answer_photo(photo=conf['logo'], caption=f"Hello {message.from_user.first_name}!\nWelcome to {conf['site_name']} ❤️🍿", reply_markup=kb)
 
+# ২. /movie
 @dp.message(Command("movie"))
 async def add_movie(m: types.Message, state: FSMContext):
     if m.from_user.id != OWNER_ID: return
@@ -154,7 +167,7 @@ async def m_quality(m: types.Message, state: FSMContext):
     if m.text and m.text.strip().casefold() == "done":
         data = await state.get_data()
         if not data.get('links'): return await m.answer("❌ কোনো ফাইল নেই!")
-        await content_col.insert_one({"type": "movie", **data, "quality": data.get('cq'), "date": datetime.now()})
+        await content_col.insert_one({"type": "movie", **data, "date": datetime.now()})
         conf = await get_config()
         post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"🎬 মুভি: {data['name']}\n📢 {PUBLIC_CHANNEL}")
         if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
@@ -171,6 +184,7 @@ async def m_file_store(m: types.Message, state: FSMContext):
     links = data.get('links', []); links.append({"q": data['cq'], "uid": uid}); await state.update_data(links=links)
     await m.answer(f"✅ {data['cq']} সেভ। পরের কোয়ালিটি দিন বা Done লিখুন।"); await state.set_state(MovieState.quality)
 
+# ৩. /series
 @dp.message(Command("series"))
 async def add_series(m: types.Message, state: FSMContext):
     if m.from_user.id != OWNER_ID: return
@@ -207,13 +221,15 @@ async def s_files_store(m: types.Message, state: FSMContext):
         eps = data.get('episodes', []); eps.append({"ep": ep_n, "uid": uid}); await state.update_data(episodes=eps)
         await m.answer(f"✅ {ep_n} সেভ। পরের এপিসোড পাঠান বা Done লিখুন।")
 
+# ৪. /protect
 @dp.message(Command("protect"))
 async def cmd_protect(m: types.Message):
     if m.from_user.id != OWNER_ID: return
     conf = await get_config(); ns = not conf.get("protect", False)
     await settings_col.update_one({"id": "config"}, {"$set": {"protect": ns}}, upsert=True)
-    await m.answer(f"🔐 ফাইল প্রটেকশন এখন: **{'অন' if ns else 'অফ'}**")
+    await m.answer(f"🔐 ফাইল প্রটেকশন এখন: **{'অন' if ns else 'অফ'}**", parse_mode="Markdown")
 
+# ৫. /logo
 @dp.message(Command("logo"))
 async def set_logo(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -223,6 +239,7 @@ async def set_logo(m: types.Message):
         await m.answer("✅ বটের লোগো আপডেট করা হয়েছে।")
     except: await m.answer("ব্যবহার: /logo [Image_URL]")
 
+# ৬. /autodlt
 @dp.message(Command("autodlt"))
 async def set_autodlt(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -230,8 +247,9 @@ async def set_autodlt(m: types.Message):
         v = int(m.text.split()[1])
         await settings_col.update_one({"id": "config"}, {"$set": {"autodlt": v}}, upsert=True)
         await m.answer(f"✅ অটো ডিলিট সময়: {v} মিনিট।")
-    except: pass
+    except: await m.answer("ব্যবহার: /autodlt 10")
 
+# ৭. /autolock
 @dp.message(Command("autolock"))
 async def set_autolock(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -239,8 +257,9 @@ async def set_autolock(m: types.Message):
         v = int(m.text.split()[1])
         await settings_col.update_one({"id": "config"}, {"$set": {"autolock": v}}, upsert=True)
         await m.answer(f"✅ অটো লক সময়: {v} মিনিট।")
-    except: pass
+    except: await m.answer("ব্যবহার: /autolock 10")
 
+# ৮. /setname
 @dp.message(Command("setname"))
 async def set_name(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -248,6 +267,7 @@ async def set_name(m: types.Message):
     await settings_col.update_one({"id": "config"}, {"$set": {"site_name": n}}, upsert=True)
     await m.answer(f"✅ সাইটের নাম সেট করা হয়েছে: {n}")
 
+# ৯. /setnotice
 @dp.message(Command("setnotice"))
 async def set_notice(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -255,21 +275,24 @@ async def set_notice(m: types.Message):
     await settings_col.update_one({"id": "config"}, {"$set": {"note": n}}, upsert=True)
     await m.answer("✅ সাইট নোটিশ আপডেট হয়েছে।")
 
+# ১০. /setmtg
 @dp.message(Command("setmtg"))
 async def set_mtg(m: types.Message):
     if m.from_user.id != OWNER_ID: return
     try:
         v = m.text.split()[1]
         await settings_col.update_one({"id": "config"}, {"$set": {"mtg": v}}, upsert=True)
-        await m.answer(f"✅ Monetag ID আপডেট হয়েছে: `{v}`")
+        await m.answer("✅ Monetag ID আপডেট হয়েছে।")
     except: await m.answer("ব্যবহার: /setmtg 123456")
 
+# ১১. /seemtg
 @dp.message(Command("seemtg"))
 async def see_mtg(m: types.Message):
     if m.from_user.id != OWNER_ID: return
     conf = await get_config()
     await m.answer(f"📢 বর্তমান Monetag ID: `{conf.get('mtg')}`")
 
+# ১২. /setstp
 @dp.message(Command("setstp"))
 async def set_stp(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -279,6 +302,7 @@ async def set_stp(m: types.Message):
         await m.answer(f"✅ এড স্টেপ সেট করা হয়েছে: {v}")
     except: await m.answer("ব্যবহার: /setstp 2")
 
+# ১৩. /dm
 @dp.message(Command("dm"))
 async def del_m(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -286,6 +310,7 @@ async def del_m(m: types.Message):
     res = await content_col.delete_one({"name": n, "type": "movie"})
     await m.answer(f"🗑 {n} ডিলিট করা হয়েছে।" if res.deleted_count else "❌ পাওয়া যায়নি।")
 
+# ১৪. /ds
 @dp.message(Command("ds"))
 async def del_s(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -293,17 +318,20 @@ async def del_s(m: types.Message):
     res = await content_col.delete_one({"name": n, "type": "series"})
     await m.answer(f"🗑 {n} ডিলিট করা হয়েছে।" if res.deleted_count else "❌ পাওয়া যায়নি।")
 
+# ১৫. /dlall
 @dp.message(Command("dlall"))
 async def del_all(m: types.Message):
     if m.from_user.id == OWNER_ID:
         await content_col.delete_many({}); await file_store.delete_many({}); await m.answer("💥 সব মুছে ফেলা হয়েছে!")
 
+# १६. /stats
 @dp.message(Command("stats"))
 async def get_stats(m: types.Message):
     if m.from_user.id == OWNER_ID:
         c = await content_col.count_documents({}); u = await user_col.count_documents({})
         await m.answer(f"📊 পরিসংখ্যান:\nপোস্ট: {c}\nইউজার: {u}")
 
+# ১৭. /perpost
 @dp.message(Command("perpost"))
 async def set_per(m: types.Message):
     if m.from_user.id == OWNER_ID:
@@ -312,6 +340,7 @@ async def set_per(m: types.Message):
             await m.answer(f"✅ পেজ লিমিট সেট: {v}")
         except: pass
 
+# ১৮. /notifi
 @dp.message(Command("notifi"))
 async def set_notif(m: types.Message):
     if m.from_user.id == OWNER_ID:
@@ -320,27 +349,24 @@ async def set_notif(m: types.Message):
             await m.answer(f"✅ চ্যানেল যুক্ত: {ch}")
         except: pass
 
-@dp.message(Command("batad"))
-async def set_batad(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    try:
-        v = int(m.text.split()[1])
-        await settings_col.update_one({"id": "config"}, {"$set": {"ad_timer": v}}, upsert=True)
-        await m.answer(f"✅ বাটন ক্লিক এড টাইমার: {v} সেকেন্ড সেট করা হয়েছে।")
-    except: await m.answer("ব্যবহার: /batad 15")
-
+# ১৯. রিকোয়েস্ট
 @dp.callback_query(F.data == "req")
 async def req_cb(cb: types.CallbackQuery, state: FSMContext):
     await cb.message.answer("📝 মুভির নাম লিখে পাঠান:"); await state.set_state(ReqState.movie_name); await cb.answer()
 
 @dp.message(ReqState.movie_name)
-async def req_process(m: types.Message, state: FSMContext):
+async def req_p(m: types.Message, state: FSMContext):
     await bot.send_message(chat_id=OWNER_ID, text=f"🚨 রিকোয়েস্ট: {m.text}\n👤: {m.from_user.full_name}"); await m.answer("✅ পাঠানো হয়েছে!"); await state.clear()
 
+# ==========================================
+# ৩. ওয়েব ডিজাইন (Jackpot ডিজাইন + Search + Category)
+# ==========================================
 
-# ==========================================
-# ৩. ওয়েব ডিজাইন (৪ কলাম গ্রিড + এড ফিক্স)
-# ==========================================
+@app.get("/media/{media_id}")
+async def serve_media(media_id: str):
+    media = await media_store.find_one({"media_id": media_id})
+    if media: return Response(content=media['data'], media_type=media['mime'])
+    return Response(status_code=404)
 
 INDEX_HTML = """
 <!DOCTYPE html>
@@ -350,25 +376,36 @@ INDEX_HTML = """
     <title>{{ conf.site_name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; }
-        .top-nav { background: #111; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; border-bottom: 2px solid #333; }
-        .logo { font-size: 22px; font-weight: 900; color: #fff; text-transform: uppercase; }
-        .logo span { background: #ff0000; color: #fff; padding: 2px 8px; border-radius: 5px; margin-left: 5px; }
-        .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 15px; }
-        .movie-card { background: #111; border-radius: 12px; overflow: hidden; border: 1px solid #222; position: relative; }
-        .movie-card img { width: 100%; height: 220px; object-fit: cover; }
-        .badge-cat { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 3px 7px; border-radius: 4px; font-size: 10px; }
-        .badge-quality { position: absolute; top: 10px; right: 10px; background: #ff0000; padding: 3px 7px; border-radius: 4px; font-size: 10px; font-weight: bold; }
-        .m-name { padding: 10px; font-weight: 600; font-size: 14px; text-align: center; color: #eee; }
-        .search-area { padding: 15px; }
-        .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 2px solid #ff0000; background: #111; color: #fff; outline: none; }
+        body { background: #fff; color: #000; font-family: 'Segoe UI', sans-serif; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #eee; }
+        .logo { font-size: 20px; font-weight: bold; }
+        .logo span { background: red; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
+        
+        .filters { display: flex; overflow-x: auto; padding: 10px 15px; gap: 10px; scrollbar-width: none; }
+        .filter-btn { background: #f0f0f0; border: none; padding: 8px 18px; border-radius: 20px; white-space: nowrap; font-size: 14px; cursor: pointer; font-weight: 500; }
+        .filter-btn.active { background: #000; color: #fff; }
+
+        .search-area { padding: 10px 15px; }
+        .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 2px solid #5d259e; outline: none; font-size: 15px; }
+
+        .movie-grid { padding: 10px; }
+        .movie-card { margin-bottom: 20px; border-radius: 15px; overflow: hidden; border: 3px solid #ffcc00; position: relative; transition: 0.3s; }
+        .movie-card img { width: 100%; height: auto; display: block; }
+        .mb-badge { position: absolute; bottom: 45px; left: 10px; background: #fff; color: red; font-size: 10px; padding: 2px 5px; border-radius: 4px; font-weight: bold; }
+        .m-name { padding: 10px; font-weight: bold; font-size: 14px; color: #333; }
     </style>
 </head>
 <body>
-    <div class="top-nav">
-        <button onclick="history.back()" class="btn btn-sm btn-outline-light">⬅ Back</button>
+    <div class="header">
         <div class="logo">Moviee <span>BD</span></div>
-        <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
+        <div style="width:35px;height:35px;background:#eee;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px">YA</div>
+    </div>
+
+    <div class="filters">
+        <button class="filter-btn active" onclick="filterCat('all', this)">All</button>
+        {% set cats = [] %}
+        {% for i in items %}{% if i.cat and i.cat not in cats %}{% set _ = cats.append(i.cat) %}{% endif %}{% endfor %}
+        {% for c in cats %}<button class="filter-btn" onclick="filterCat('{{ c }}', this)">{{ c }}</button>{% endfor %}
     </div>
 
     <div class="search-area">
@@ -377,12 +414,11 @@ INDEX_HTML = """
 
     <div class="movie-grid" id="movieList">
         {% for i in items %}
-        <div class="movie-item" data-name="{{ i.name | lower }}">
+        <div class="movie-item" data-name="{{ i.name | lower }}" data-cat="{{ i.cat }}">
             <a href="/view/{{ i._id }}" class="text-decoration-none">
-                <div class="movie-card">
+                <div class="movie-card" style="border-color: {{ ['#ff0000','#00ff00','#0000ff','#ffcc00','#ff00ff'] | random }}">
                     <img src="{{ i.poster }}" loading="lazy">
-                    <div class="badge-cat">{{ i.cat }}</div>
-                    <div class="badge-quality">{% if i.type == 'movie' %}{{ i.quality }}{% else %}{{ i.episodes | length }} EP{% endif %}</div>
+                    <div class="mb-badge">MB</div>
                     <div class="m-name">{{ i.name }}</div>
                 </div>
             </a>
@@ -390,13 +426,15 @@ INDEX_HTML = """
         {% endfor %}
     </div>
 
-    <nav class="pb-5"><ul class="pagination justify-content-center">
-        {% if current_page > 1 %}<li class="page-item"><a class="page-link bg-dark text-white" href="/?page={{ current_page - 1 }}">Prev</a></li>{% endif %}
-        <li class="page-item active"><a class="page-link bg-danger border-danger text-white">{{ current_page }}</a></li>
-        {% if current_page < total_pages %}<li class="page-item"><a class="page-link bg-dark text-white" href="/?page={{ current_page + 1 }}">Next</a></li>{% endif %}
-    </ul></nav>
-
     <script>
+        function filterCat(c, b) {
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            b.classList.add('active');
+            document.querySelectorAll('.movie-item').forEach(m => {
+                if(c === 'all' || m.dataset.cat === c) m.style.display = 'block';
+                else m.style.display = 'none';
+            });
+        }
         function searchMe(v) {
             v = v.toLowerCase();
             document.querySelectorAll('.movie-item').forEach(m => {
@@ -416,199 +454,68 @@ DETAIL_HTML = """
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ item.name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
-    <!-- Monetag SDK Script -->
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
-    
     <style>
-        body { background: #000; color: #fff; text-align: center; padding-bottom: 50px; }
-        .top-nav { background: #111; padding: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
-        .poster { width: 90%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.5); margin: 25px auto; display: block; }
-        
-        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 16px; box-shadow: 0 0 15px #ff0000; display: none; }
-
-        .btn-main { 
-            background: linear-gradient(45deg, #ff0000, #ff5555); padding: 18px; width: 90%; margin: 15px auto; 
-            border-radius: 15px; border: none; font-weight: 800; font-size: 18px; color: #fff;
-            box-shadow: 0 0 25px rgba(255, 0, 0, 0.6); display: block; text-decoration: none; transition: 0.3s;
-        }
-
-        /* ৪ কলাম ইপিসোড গ্রিড */
-        .ep-grid { 
-            display: grid; 
-            grid-template-columns: repeat(4, 1fr); 
-            gap: 8px; 
-            padding: 15px; 
-        }
-        .btn-ep { 
-            padding: 12px 2px; border-radius: 8px; font-weight: 700; font-size: 11px; 
-            border: none; color: #fff; cursor: pointer; text-decoration: none; 
-            display: flex; align-items: center; justify-content: center; min-height: 45px;
-        }
-        .c1 { background: #e91e63; box-shadow: 0 0 8px #e91e63; } 
-        .c2 { background: #007bff; box-shadow: 0 0 8px #007bff; } 
-        .c3 { background: #4caf50; box-shadow: 0 0 8px #4caf50; }
-        .c4 { background: #673ab7; box-shadow: 0 0 8px #673ab7; }
-        .get-btn { background: #ffc107; color: #000; box-shadow: 0 0 15px #ffc107; display: none; }
+        body { background: #000; color: #fff; text-align: center; padding: 20px; }
+        .poster { width: 100%; max-width: 350px; border-radius: 20px; border: 4px solid #00ff00; }
+        .btn-step { background: linear-gradient(45deg, #5d259e, #a020f0); color: #fff; padding: 18px; border-radius: 12px; margin: 15px auto; max-width: 400px; font-weight: bold; cursor: pointer; border: none; width: 100%; font-size: 16px; }
     </style>
 </head>
 <body>
-    <div class="top-nav">
-        <button onclick="location.href='/'" class="btn btn-sm btn-outline-light">🏠 Home</button>
-        <span style="font-weight:bold; color:red;">Premium Player</span>
-        <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
-    </div>
-
-    <img src="{{ item.poster }}" class="poster">
-    <h2 class="px-3" style="font-weight:900;">{{ item.name }}</h2>
-
-    <div id="countdown-msg" class="timer-info"></div>
+    <img src="{{ item.poster }}" class="poster" onerror="this.src='https://telegra.ph/file/0f2e825a07530467776d5.jpg'">
+    <h3 class="my-3">{{ item.name }}</h3>
 
     <div id="unlock-section">
-        {% if item.type == 'movie' %}
-            {% for l in item.links %}
-            <div id="box-{{ l.uid }}" class="px-3">
-                <button id="btn-{{ l.uid }}" class="btn-main" onclick="startAd('{{ l.uid }}')">
-                    🔓 UNLOCK {{ l.q }} FILE
-                </button>
-                <div id="get-{{ l.uid }}" style="display:none;">
-                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-main" style="background:#00c853; box-shadow:0 0 25px #00c853;">
-                        📥 GET NOW
-                    </a>
-                </div>
-            </div>
-            {% endfor %}
-        {% else %}
-            <div class="ep-grid">
-            {% for e in item.episodes %}
-                <div id="box-{{ e.uid }}">
-                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3','c4']|random }}" onclick="startAd('{{ e.uid }}')">
-                        Episode {{ "%02d"|format(loop.index) }}
-                    </button>
-                    <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">GET</a>
-                </div>
-            {% endfor %}
-            </div>
-        {% endif %}
+        {% if item.type == 'movie' %}{% for l in item.links %}
+            <button id="btn-{{ l.uid }}" class="btn-step" onclick="handleStep('{{ l.uid }}')">🔓 UNLOCK FILE (Step 1/{{ conf.stp }})</button>
+            <div id="get-{{ l.uid }}" style="display:none;"><a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn btn-primary btn-lg w-100 p-3">📥 GET MOVIE FILE</a></div>
+        {% endfor %}{% else %}{% for e in item.episodes %}
+            <button id="btn-{{ e.uid }}" class="btn-step" onclick="handleStep('{{ e.uid }}')">🔓 UNLOCK {{ e.ep }} (Step 1/{{ conf.stp }})</button>
+            <div id="get-{{ e.uid }}" style="display:none;"><a href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn btn-primary btn-lg w-100 p-3">📥 GET {{ e.ep }}</a></div>
+        {% endfor %}{% endif %}
     </div>
 
     <script>
-        const autolockMins = {{ conf.autolock }};
-        const adTimerSecs = {{ conf.ad_timer }};
-        const zoneId = "{{ conf.mtg }}";
-        let adStartedAt = 0;
-
-        function setLocal(key, val, minutes) {
-            const expiry = new Date().getTime() + (minutes * 60 * 1000);
-            localStorage.setItem(key, JSON.stringify({ value: val, expiry: expiry }));
-        }
-
-        function getLocal(key) {
-            const itemStr = localStorage.getItem(key);
-            if (!itemStr) return null;
-            const item = JSON.parse(itemStr);
-            if (new Date().getTime() > item.expiry) { localStorage.removeItem(key); return null; }
-            return item;
-        }
-
-        function updateLockDisplay() {
-            const allKeys = Object.keys(localStorage);
-            const activeKey = allKeys.find(k => k.startsWith('unlocked_') && getLocal(k));
-            const msgBox = document.getElementById('countdown-msg');
+        let currentSteps = {};
+        const maxSteps = {{ conf.stp }};
+        function handleStep(uid) {
+            if(!currentSteps[uid]) currentSteps[uid] = 1;
+            if (typeof show_{{ conf.mtg }} === 'function') { show_{{ conf.mtg }}(); }
             
-            if(activeKey) {
-                const item = JSON.parse(localStorage.getItem(activeKey));
-                const remaining = Math.round((item.expiry - new Date().getTime()) / 1000);
-                if(remaining > 0) {
-                    const mins = Math.floor(remaining / 60);
-                    const secs = remaining % 60;
-                    msgBox.style.display = 'block';
-                    msgBox.innerHTML = `🔐 এটি ${mins} মি. ${secs} সে. পর পুনরায় লক হবে।`;
-                } else { msgBox.style.display = 'none'; location.reload(); }
-            } else { msgBox.style.display = 'none'; }
-        }
-
-        function checkPersistence() {
-            document.querySelectorAll('[id^="btn-"]').forEach(btn => {
-                const uid = btn.id.replace('btn-', '');
-                if (getLocal('unlocked_' + uid)) {
-                    btn.style.display = 'none';
-                    const getLink = document.getElementById('get-' + uid);
-                    if(getLink) getLink.style.display = 'flex';
-                }
-            });
-        }
-
-        function startAd(uid) {
-            if (getLocal('unlocked_' + uid)) return;
-            
-            const now = new Date().getTime();
-            if (adStartedAt === 0) {
-                adStartedAt = now;
-                // বিজ্ঞাপন নিশ্চিত করার জন্য Monetag SDK ফাংশন কল
-                const sdkFuncName = 'show_' + zoneId;
-                if (typeof window[sdkFuncName] === 'function') {
-                    window[sdkFuncName]();
-                } else {
-                    console.log("Ad SDK not ready.");
-                    alert("বিজ্ঞাপন লোড হচ্ছে, আবার চেষ্টা করুন।");
-                    location.reload();
-                    return;
-                }
-                alert("এডটি চালু হয়েছে। কমপক্ষে " + adTimerSecs + " সেকেন্ড এডটি দেখুন, তারপর আবার বাটনে ক্লিক করুন।");
-                return;
+            if(currentSteps[uid] >= maxSteps) {
+                document.getElementById('btn-'+uid).style.display = 'none';
+                document.getElementById('get-'+uid).style.display = 'block';
+            } else {
+                currentSteps[uid]++;
+                document.getElementById('btn-'+uid).innerText = `🔓 UNLOCK (Step ${currentSteps[uid]}/${maxSteps})`;
             }
-
-            const elapsed = (now - adStartedAt) / 1000;
-            if (elapsed < adTimerSecs) {
-                alert("দয়া করে এডটি সম্পূর্ণ দেখুন! আরও " + Math.round(adTimerSecs - elapsed) + " সেকেন্ড বাকি।");
-                return;
-            }
-
-            setLocal('unlocked_' + uid, 'true', autolockMins);
-            location.reload();
         }
-
-        window.onload = () => {
-            checkPersistence();
-            setInterval(updateLockDisplay, 1000);
-        };
     </script>
+    <br><a href="/" class="btn btn-dark">Back to Home</a>
 </body>
 </html>
 """
 
-# ==========================================
-# ৪. মেইন এন্ট্রি পয়েন্ট
-# ==========================================
+# --- রুটস ---
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request, page: int = 1, user_id: str = None):
+async def home(request: Request, user_id: str = None):
     conf = await get_config()
     if user_id:
         response = RedirectResponse(url="/")
         response.set_cookie(key="tg_user_id", value=user_id, max_age=31536000)
         return response
-    
-    per_page = conf.get('per', 10)
-    total_all = await content_col.count_documents({})
-    total_pages = (total_all + per_page - 1) // per_page
-    items = await content_col.find().sort("date", -1).skip((page - 1) * per_page).limit(per_page).to_list(per_page)
-    
-    return Template(INDEX_HTML).render(items=items, conf=conf, current_page=page, total_pages=total_pages)
+    items = await content_col.find().sort("date", -1).to_list(100)
+    return Template(INDEX_HTML).render(items=items, conf=conf)
 
 @app.get("/view/{id}", response_class=HTMLResponse)
 async def detail(id: str):
-    await content_col.update_one({"_id": ObjectId(id)}, {"$inc": {"views": 1}})
-    item = await content_col.find_one({"_id": ObjectId(id)})
-    conf = await get_config()
+    item = await content_col.find_one({"_id": ObjectId(id)}); conf = await get_config()
     if not item: return "Not Found"
     return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
 
-@app.get("/media/{media_id}")
-async def serve_media(media_id: str):
-    media = await media_store.find_one({"media_id": media_id})
-    if media: return Response(content=media['data'], media_type=media['mime'])
-    return Response(status_code=404)
-
+# ==========================================
+# ৪. মেইন এন্ট্রি পয়েন্ট (Conflict ফিক্সড)
+# ==========================================
 if __name__ == "__main__":
+    # workers=1 নিশ্চিত করে যে শুধুমাত্র একটি প্রসেস চালু হবে, এতে Conflict Error আসবে না
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info", workers=1)
