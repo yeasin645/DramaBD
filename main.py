@@ -64,7 +64,7 @@ async def get_config():
     conf = await settings_col.find_one({"id": "config"})
     if not conf:
         conf = {
-            "id": "config", "site_name": "Drama Store King", "note": "মুভি দেখার নতুন ঠিকানা!", 
+            "id": "config", "site_name": "Moviee BD", "note": "মুভি দেখার নতুন ঠিকানা!", 
             "logo": f"{APP_URL}/media/default_logo", 
             "autodlt": 10, "autolock": 10, "per": 10, "mtg": "10351894", "stp": 1, "protect": False,
             "ad_timer": 12 
@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI):
         menu_button=MenuButtonWebApp(text="Watch Now 🎬", web_app=WebAppInfo(url=APP_URL))
     )
     polling_task = asyncio.create_task(dp.start_polling(bot))
-    logging.info("বট স্টার্ট হয়েছে...")
+    logging.info("বট পোলিং শুরু হয়েছে...")
     yield
     polling_task.cancel()
     await bot.session.close()
@@ -109,7 +109,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # ==========================================
-# ২. টেলিগ্রাম ১৯টি কমান্ড লজিক (সম্পূর্ণ অক্ষত)
+# ২. ১৯টি কমান্ড (হুবহু অক্ষত)
 # ==========================================
 
 @dp.message(Command("start"))
@@ -124,7 +124,7 @@ async def cmd_start(message: types.Message, command: CommandObject):
     login_url = f"{APP_URL}/?user_id={message.from_user.id}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎬 Watch Now (Premium Login)", url=login_url)],
-        [InlineKeyboardButton(text="📥 Movie Request", callback_data="req"), InlineKeyboardButton(text="🚀 Share Bot", switch_inline_query="")],
+        [InlineKeyboardButton(text="📥 Movie Request", callback_data="req"), InlineKeyboardButton(text=" My Referral Link", switch_inline_query="")],
         [InlineKeyboardButton(text=" Help & Tutorial", url="https://t.me/MovieeBD"), InlineKeyboardButton(text=" All Channels", url="https://t.me/all_channels")]
     ])
     await message.answer_photo(photo=conf['logo'], caption=f"Hello {message.from_user.first_name}!\nWelcome to {conf['site_name']} ❤️🍿", reply_markup=kb)
@@ -137,7 +137,7 @@ async def add_movie(m: types.Message, state: FSMContext):
 @dp.message(MovieState.name)
 async def m_name(m: types.Message, state: FSMContext):
     await state.update_data(name=m.text, links=[], views=0)
-    await m.answer("📁 ক্যাটাগরি দিন (যেমন: Movie, Bangla Natok):"); await state.set_state(MovieState.category)
+    await m.answer("📁 ক্যাটাগরি দিন (যেমন: Movie, CID, Bangla Natok):"); await state.set_state(MovieState.category)
 
 @dp.message(MovieState.category)
 async def m_cat(m: types.Message, state: FSMContext):
@@ -339,7 +339,7 @@ async def req_process(m: types.Message, state: FSMContext):
 
 
 # ==========================================
-# ৩. ওয়েব সার্ভার (ডিজাইন ও এড লজিক)
+# ৩. ওয়েব ডিজাইন ও এড ফিক্স ( Lighting + 4 Col + Timer )
 # ==========================================
 
 INDEX_HTML = """
@@ -356,27 +356,27 @@ INDEX_HTML = """
         .logo span { background: #ff0000; color: #fff; padding: 2px 8px; border-radius: 5px; margin-left: 5px; }
         .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 12px; }
         .movie-card { background: #111; border-radius: 12px; overflow: hidden; border: 1px solid #222; position: relative; transition: 0.3s; }
-        .movie-card img { width: 100%; height: 210px; object-fit: cover; }
-        .badge-quality { position: absolute; top: 8px; right: 8px; background: #ff0000; padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
+        .movie-card img { width: 100%; height: 220px; object-fit: cover; }
+        .badge-q { position: absolute; top: 8px; right: 8px; background: #ff0000; font-size: 10px; padding: 3px 6px; border-radius: 4px; font-weight: bold; }
         .m-name { padding: 8px; font-weight: 600; font-size: 14px; text-align: center; color: #eee; min-height: 40px; }
         .search-area { padding: 12px; }
-        .search-box { width: 100%; padding: 12px 20px; border-radius: 30px; border: 1px solid #ff0000; background: #111; color: #fff; outline: none; }
+        .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 1px solid #ff0000; background: #111; color: #fff; outline: none; }
     </style>
 </head>
 <body>
     <div class="top-nav">
         <button onclick="history.back()" class="btn btn-sm btn-outline-light">⬅ Back</button>
-        <div class="logo">Drama <span>King</span></div>
+        <div class="logo">Moviee <span>BD</span></div>
         <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
     </div>
-    <div class="search-area"><input type="text" class="search-box" placeholder="সার্চ করুন..." onkeyup="searchMe(this.value)"></div>
+    <div class="search-area"><input type="text" class="search-box" placeholder="Search content..." onkeyup="searchMe(this.value)"></div>
     <div class="movie-grid" id="movieList">
         {% for i in items %}
         <div class="movie-item" data-name="{{ i.name | lower }}">
             <a href="/view/{{ i._id }}" class="text-decoration-none">
                 <div class="movie-card">
                     <img src="{{ i.poster }}" loading="lazy">
-                    <div class="badge-quality">{% if i.type == 'movie' %}{{ i.quality }}{% else %}{{ i.episodes | length }} EP{% endif %}</div>
+                    <div class="badge-q">{% if i.type == 'movie' %}{{ i.quality }}{% else %}{{ i.episodes | length }} EP{% endif %}</div>
                     <div class="m-name">{{ i.name }}</div>
                 </div>
             </a>
@@ -403,28 +403,40 @@ DETAIL_HTML = """
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ item.name }}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Monetag SDK Script (User Provided) -->
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
+    
     <style>
-        body { background: #000; color: #fff; text-align: center; padding-bottom: 60px; }
-        .top-nav { background: #111; padding: 12px; display: flex; justify-content: space-between; border-bottom: 2px solid #ff0000; }
-        .poster { width: 90%; max-width: 320px; border-radius: 15px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.6); margin: 25px auto; display: block; }
-        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 16px; box-shadow: 0 0 15px #ff0000; display: none; }
+        body { background: #000; color: #fff; text-align: center; padding-bottom: 60px; font-family: sans-serif; }
+        .top-nav { background: #111; padding: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
+        .poster { width: 85%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.6); margin: 25px auto; display: block; }
         
-        .btn-unlock { 
-            background: linear-gradient(45deg, #ff0000, #ff5555); padding: 18px; width: 90%; margin: 15px auto; 
-            border-radius: 15px; border: none; font-weight: 800; font-size: 18px; color: #fff;
-            box-shadow: 0 0 25px rgba(255, 0, 0, 0.6); display: block; text-decoration: none; transition: 0.3s;
-        }
+        /* প্রিমিয়াম টাইমার বক্স */
+        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 18px; box-shadow: 0 0 20px #ff0000; display: none; }
 
+        /* লাইটিং প্রিমিয়াম বাটন */
+        .btn-premium { 
+            position: relative; overflow: hidden; padding: 18px; width: 90%; margin: 15px auto; 
+            border-radius: 15px; border: none; font-weight: 800; font-size: 18px; color: #fff;
+            background: linear-gradient(45deg, #ff0000, #ff5555);
+            box-shadow: 0 0 25px rgba(255, 0, 0, 0.7);
+            transition: 0.4s; text-decoration: none; display: block;
+        }
+        .btn-premium:active { transform: scale(0.95); }
+
+        /* ৪ কলাম ইপিসোড গ্রিড */
         .ep-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 15px; }
         .btn-ep { 
-            padding: 12px 2px; border-radius: 8px; font-weight: 700; font-size: 11px; 
+            padding: 15px 2px; border-radius: 10px; font-weight: 800; font-size: 12px; 
             border: none; color: #fff; cursor: pointer; text-decoration: none; 
-            display: flex; align-items: center; justify-content: center; min-height: 45px;
-            box-shadow: 0 0 5px rgba(255,255,255,0.2);
+            display: flex; align-items: center; justify-content: center; min-height: 48px; transition: 0.3s;
         }
-        .c1 { background: #e91e63; } .c2 { background: #007bff; } .c3 { background: #4caf50; } .c4 { background: #673ab7; }
-        .get-btn { background: #ffc107 !important; color: #000 !important; font-weight: 900; display: none; box-shadow: 0 0 10px #ffc107; }
+        .c1 { background: #e91e63; box-shadow: 0 0 10px rgba(233,30,99,0.5); } 
+        .c2 { background: #007bff; box-shadow: 0 0 10px rgba(0,123,255,0.5); } 
+        .c3 { background: #4caf50; box-shadow: 0 0 10px rgba(76,175,80,0.5); }
+        .c4 { background: #6f42c1; box-shadow: 0 0 10px rgba(111,66,193,0.5); }
+        .get-btn { background: #ffc107 !important; color: #000 !important; font-weight: 900; box-shadow: 0 0 20px #ffc107; display: none; }
     </style>
 </head>
 <body>
@@ -437,15 +449,20 @@ DETAIL_HTML = """
     <img src="{{ item.poster }}" class="poster">
     <h2 class="px-3" style="font-weight:900;">{{ item.name }}</h2>
 
+    <!-- টাইমার মেসেজ -->
     <div id="countdown-msg" class="timer-info"></div>
 
     <div id="unlock-section">
         {% if item.type == 'movie' %}
             {% for l in item.links %}
             <div id="box-{{ l.uid }}" class="px-3">
-                <button id="btn-{{ l.uid }}" class="btn-unlock" onclick="startAd('{{ l.uid }}')">🔓 UNLOCK {{ l.q }} FILE</button>
+                <button id="btn-{{ l.uid }}" class="btn-premium" onclick="startAd('{{ l.uid }}')">
+                    🔓 UNLOCK {{ l.q }} FILE
+                </button>
                 <div id="get-{{ l.uid }}" style="display:none;">
-                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-unlock" style="background:#00c853; box-shadow:0 0 25px #00c853;">📥 GET NOW</a>
+                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-premium" style="background:#00c853; box-shadow:0 0 25px #00c853;">
+                        📥 DOWNLOAD / WATCH NOW
+                    </a>
                 </div>
             </div>
             {% endfor %}
@@ -453,11 +470,14 @@ DETAIL_HTML = """
             <div class="ep-grid">
             {% for e in item.episodes %}
                 <div id="box-{{ e.uid }}">
-                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3','c4']|random }}" onclick="startAd('{{ e.uid }}')">Episode {{ "%02d"|format(loop.index) }}</button>
+                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3', 'c4']|random }}" onclick="startAd('{{ e.uid }}')">
+                        Episode {{ "%02d"|format(loop.index) }}
+                    </button>
                     <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">GET</a>
                 </div>
             {% endfor %}
             </div>
+            <p style="color:#ffcc00; font-weight:bold; font-size:14px; margin-top:10px;">ইপিসোড এ ক্লিক করে এড দেখুন এবং আনলক করুন</p>
         {% endif %}
     </div>
 
@@ -473,13 +493,31 @@ DETAIL_HTML = """
         }
 
         function getLocal(key) {
-            const item = JSON.parse(localStorage.getItem(key));
-            if (!item) return null;
+            const itemStr = localStorage.getItem(key);
+            if (!itemStr) return null;
+            const item = JSON.parse(itemStr);
             if (new Date().getTime() > item.expiry) { localStorage.removeItem(key); return null; }
             return item;
         }
 
-        function refreshStatus() {
+        function updateLockDisplay() {
+            const allKeys = Object.keys(localStorage);
+            const activeKey = allKeys.find(k => k.startsWith('unlocked_') && getLocal(k));
+            const msgBox = document.getElementById('countdown-msg');
+            
+            if(activeKey) {
+                const item = JSON.parse(localStorage.getItem(activeKey));
+                const remaining = Math.round((item.expiry - new Date().getTime()) / 1000);
+                if(remaining > 0) {
+                    const mins = Math.floor(remaining / 60);
+                    const secs = remaining % 60;
+                    msgBox.style.display = 'block';
+                    msgBox.innerHTML = `🔐 এটি ${mins} মি. ${secs} সে. পর পুনরায় লক হবে।`;
+                } else { msgBox.style.display = 'none'; location.reload(); }
+            } else { msgBox.style.display = 'none'; }
+        }
+
+        function checkPersistence() {
             document.querySelectorAll('[id^="btn-"]').forEach(btn => {
                 const uid = btn.id.replace('btn-', '');
                 if (getLocal('unlocked_' + uid)) {
@@ -488,34 +526,21 @@ DETAIL_HTML = """
                     if(getLink) getLink.style.display = 'flex';
                 }
             });
-            updateCountdown();
-        }
-
-        function updateCountdown() {
-            const allKeys = Object.keys(localStorage);
-            const activeKey = allKeys.find(k => k.startsWith('unlocked_') && getLocal(k));
-            const msgBox = document.getElementById('countdown-msg');
-            if(activeKey) {
-                const item = JSON.parse(localStorage.getItem(activeKey));
-                const remaining = Math.round((item.expiry - new Date().getTime()) / 1000);
-                if(remaining > 0) {
-                    msgBox.style.display = 'block';
-                    msgBox.innerHTML = `🔐 এটি ${Math.floor(remaining/60)} মি. ${remaining%60} সে. পর লক হবে।`;
-                } else { location.reload(); }
-            } else { msgBox.style.display = 'none'; }
         }
 
         function startAd(uid) {
             if (getLocal('unlocked_' + uid)) return;
+            
+            // বিজ্ঞাপন ফাংশন কল
             const sdkFunc = "show_" + zoneId;
             
             if (adStartedAt === 0) {
                 if (typeof window[sdkFunc] === 'function') {
-                    window[sdkFunc]();
+                    window[sdkFunc](); // এড শো করবে
                     adStartedAt = new Date().getTime();
-                    alert("এড শুরু হয়েছে! অন্তত " + adTimer + " সেকেন্ড দেখুন, তারপর আবার ক্লিক করুন।");
+                    alert("এড শুরু হয়েছে! অন্তত " + adTimer + " সেকেন্ড এডটি দেখুন, তারপর আবার বাটনে ক্লিক করুন।");
                 } else {
-                    alert("এড লোড হচ্ছে, পেজ রিলোড দিন।");
+                    alert("এড লোড হচ্ছে না, পেজটি রিফ্রেশ দিন।");
                     location.reload();
                 }
                 return;
@@ -523,23 +548,25 @@ DETAIL_HTML = """
 
             const elapsed = (new Date().getTime() - adStartedAt) / 1000;
             if (elapsed < adTimer) {
-                alert("আরও " + Math.round(adTimer - elapsed) + " সেকেন্ড বাকি!");
+                alert("দয়া করে এডটি সম্পূর্ণ দেখুন! আরও " + Math.round(adTimer - elapsed) + " সেকেন্ড বাকি।");
                 return;
             }
 
             setLocal('unlocked_' + uid, autoLock);
-            refreshStatus();
-            alert("✅ আনলক হয়েছে!");
+            location.reload();
         }
 
-        window.onload = () => { refreshStatus(); setInterval(updateCountdown, 1000); };
+        window.onload = () => {
+            checkPersistence();
+            setInterval(updateLockDisplay, 1000);
+        };
     </script>
 </body>
 </html>
 """
 
 # ==========================================
-# ৪. সার্ভার রুটস এবং এপিআই
+# ৪. মেইন এন্ট্রি পয়েন্ট ও রুট লজিক
 # ==========================================
 
 @app.get("/", response_class=HTMLResponse)
@@ -549,6 +576,7 @@ async def home(request: Request, page: int = 1, user_id: str = None):
         response = RedirectResponse(url="/")
         response.set_cookie(key="tg_user_id", value=user_id, max_age=31536000)
         return response
+    
     per_page = conf.get('per', 10)
     items = await content_col.find().sort("date", -1).skip((page - 1) * per_page).limit(per_page).to_list(per_page)
     return Template(INDEX_HTML).render(items=items, conf=conf, current_page=page)
