@@ -45,14 +45,14 @@ dp = Dispatcher(storage=MemoryStorage())
 # --- এফএসএম (স্টেট ম্যানেজমেন্ট) ---
 class MovieState(StatesGroup):
     name = State()
-    category = State() # ক্যাটাগরি যুক্ত করা হয়েছে
+    category = State()
     photo = State()
     quality = State()
     file = State()
 
 class SeriesState(StatesGroup):
     name = State()
-    category = State() # ক্যাটাগরি যুক্ত করা হয়েছে
+    category = State()
     photo = State()
     files = State()
 
@@ -93,24 +93,26 @@ async def auto_delete_task(chat_id, message_id, minutes):
         try: await bot.delete_message(chat_id, message_id)
         except: pass
 
-# --- লাইফস্প্যান (WebApp বাটন সেটসহ) ---
+# --- লাইফস্প্যান (Conflict Error ফিক্স করার জন্য) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # পুরোনো সেশন ক্লিয়ার করা
     await bot.delete_webhook(drop_pending_updates=True)
-    # স্ক্রিনশটের মতো "Watch Now" মেনু বাটন সেট করা
+    # মেনু বাটন সেট করা
     await bot.set_chat_menu_button(
         menu_button=MenuButtonWebApp(text="Watch Now 🎬", web_app=WebAppInfo(url=APP_URL))
     )
     polling_task = asyncio.create_task(dp.start_polling(bot))
-    logging.info("বট এবং মেনু বাটন স্টার্ট হয়েছে...")
+    logging.info("বট পোলিং শুরু হয়েছে...")
     yield
+    # বন্ধ হওয়ার সময় ক্লিনিং
     polling_task.cancel()
     await bot.session.close()
 
 app = FastAPI(lifespan=lifespan)
 
 # ==========================================
-# ২. ১৯টি পূর্ণাঙ্গ কমান্ড লজিক (সম্পূর্ণ)
+# ২. ১৯টি পূর্ণাঙ্গ কমান্ড লজিক (এক বিন্দুও বাদ নেই)
 # ==========================================
 
 # ১. /start
@@ -133,7 +135,7 @@ async def cmd_start(message: types.Message, command: CommandObject):
 
     login_url = f"{APP_URL}/?user_id={message.from_user.id}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎬 Watch Now (Web App)", web_app=WebAppInfo(url=APP_URL))],
+        [InlineKeyboardButton(text="🎬 Watch Now (Premium Login)", url=login_url)],
         [InlineKeyboardButton(text="📥 Movie Request", callback_data="req"), InlineKeyboardButton(text=" My Referral Link", switch_inline_query="")],
         [InlineKeyboardButton(text=" Help & Tutorial", url="https://t.me/MovieeBD"), InlineKeyboardButton(text=" All Channels", url="https://t.me/all_channels")]
     ])
@@ -234,7 +236,7 @@ async def set_logo(m: types.Message):
     try: 
         link = m.text.split()[1]
         await settings_col.update_one({"id": "config"}, {"$set": {"logo": link}}, upsert=True)
-        await m.answer("✅ লোগো আপডেট করা হয়েছে।")
+        await m.answer("✅ বটের লোগো আপডেট করা হয়েছে।")
     except: await m.answer("ব্যবহার: /logo [Image_URL]")
 
 # ৬. /autodlt
@@ -290,7 +292,7 @@ async def see_mtg(m: types.Message):
     conf = await get_config()
     await m.answer(f"📢 বর্তমান Monetag ID: `{conf.get('mtg')}`")
 
-# ১২. /setstp (স্টেপ সিস্টেমের জন্য)
+# ১২. /setstp
 @dp.message(Command("setstp"))
 async def set_stp(m: types.Message):
     if m.from_user.id != OWNER_ID: return
@@ -322,7 +324,7 @@ async def del_all(m: types.Message):
     if m.from_user.id == OWNER_ID:
         await content_col.delete_many({}); await file_store.delete_many({}); await m.answer("💥 সব মুছে ফেলা হয়েছে!")
 
-# ১৬. /stats
+# १६. /stats
 @dp.message(Command("stats"))
 async def get_stats(m: types.Message):
     if m.from_user.id == OWNER_ID:
@@ -347,17 +349,17 @@ async def set_notif(m: types.Message):
             await m.answer(f"✅ চ্যানেল যুক্ত: {ch}")
         except: pass
 
-# ১৯. রিকোয়েস্ট (Callback)
+# ১৯. রিকোয়েস্ট
 @dp.callback_query(F.data == "req")
 async def req_cb(cb: types.CallbackQuery, state: FSMContext):
-    await cb.message.answer("📝 মুভির নাম পাঠান:"); await state.set_state(ReqState.movie_name); await cb.answer()
+    await cb.message.answer("📝 মুভির নাম লিখে পাঠান:"); await state.set_state(ReqState.movie_name); await cb.answer()
 
 @dp.message(ReqState.movie_name)
-async def req_process(m: types.Message, state: FSMContext):
+async def req_p(m: types.Message, state: FSMContext):
     await bot.send_message(chat_id=OWNER_ID, text=f"🚨 রিকোয়েস্ট: {m.text}\n👤: {m.from_user.full_name}"); await m.answer("✅ পাঠানো হয়েছে!"); await state.clear()
 
 # ==========================================
-# ৩. ওয়েব ডিজাইন (একদম স্ক্রিনশটের মতো Jackpot ডিজাইন)
+# ৩. ওয়েব ডিজাইন (Jackpot ডিজাইন + Search + Category)
 # ==========================================
 
 @app.get("/media/{media_id}")
@@ -378,33 +380,31 @@ INDEX_HTML = """
         .header { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #eee; }
         .logo { font-size: 20px; font-weight: bold; }
         .logo span { background: red; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
-        .avatar { width: 35px; height: 35px; background: #e0e0e0; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666; }
         
         .filters { display: flex; overflow-x: auto; padding: 10px 15px; gap: 10px; scrollbar-width: none; }
-        .filters::-webkit-scrollbar { display: none; }
-        .filter-btn { background: #f0f0f0; border: none; padding: 8px 20px; border-radius: 20px; white-space: nowrap; font-size: 14px; cursor: pointer; font-weight: 500; }
+        .filter-btn { background: #f0f0f0; border: none; padding: 8px 18px; border-radius: 20px; white-space: nowrap; font-size: 14px; cursor: pointer; font-weight: 500; }
         .filter-btn.active { background: #000; color: #fff; }
 
         .search-area { padding: 10px 15px; }
         .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 2px solid #5d259e; outline: none; font-size: 15px; }
 
         .movie-grid { padding: 10px; }
-        .movie-card { margin-bottom: 20px; border-radius: 15px; overflow: hidden; border: 3px solid #ffcc00; position: relative; }
+        .movie-card { margin-bottom: 20px; border-radius: 15px; overflow: hidden; border: 3px solid #ffcc00; position: relative; transition: 0.3s; }
         .movie-card img { width: 100%; height: auto; display: block; }
         .mb-badge { position: absolute; bottom: 45px; left: 10px; background: #fff; color: red; font-size: 10px; padding: 2px 5px; border-radius: 4px; font-weight: bold; }
-        .m-name { padding: 10px; font-weight: bold; font-size: 14px; color: #333; text-align: left; }
+        .m-name { padding: 10px; font-weight: bold; font-size: 14px; color: #333; }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">Moviee <span>BD</span></div>
-        <div class="avatar">YA</div>
+        <div style="width:35px;height:35px;background:#eee;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px">YA</div>
     </div>
 
     <div class="filters">
         <button class="filter-btn active" onclick="filterCat('all', this)">All</button>
         {% set cats = [] %}
-        {% for i in items %}{% if i.cat not in cats %}{% set _ = cats.append(i.cat) %}{% endif %}{% endfor %}
+        {% for i in items %}{% if i.cat and i.cat not in cats %}{% set _ = cats.append(i.cat) %}{% endif %}{% endfor %}
         {% for c in cats %}<button class="filter-btn" onclick="filterCat('{{ c }}', this)">{{ c }}</button>{% endfor %}
     </div>
 
@@ -416,7 +416,7 @@ INDEX_HTML = """
         {% for i in items %}
         <div class="movie-item" data-name="{{ i.name | lower }}" data-cat="{{ i.cat }}">
             <a href="/view/{{ i._id }}" class="text-decoration-none">
-                <div class="movie-card" style="border-color: {{ ['#ff0000','#00ff00','#0000ff','#ffcc00','#5d259e'] | random }}">
+                <div class="movie-card" style="border-color: {{ ['#ff0000','#00ff00','#0000ff','#ffcc00','#ff00ff'] | random }}">
                     <img src="{{ i.poster }}" loading="lazy">
                     <div class="mb-badge">MB</div>
                     <div class="m-name">{{ i.name }}</div>
@@ -457,7 +457,7 @@ DETAIL_HTML = """
     <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
     <style>
         body { background: #000; color: #fff; text-align: center; padding: 20px; }
-        .poster { width: 100%; max-width: 350px; border-radius: 20px; border: 4px solid #00ff00; box-shadow: 0 0 20px #00ff00; }
+        .poster { width: 100%; max-width: 350px; border-radius: 20px; border: 4px solid #00ff00; }
         .btn-step { background: linear-gradient(45deg, #5d259e, #a020f0); color: #fff; padding: 18px; border-radius: 12px; margin: 15px auto; max-width: 400px; font-weight: bold; cursor: pointer; border: none; width: 100%; font-size: 16px; }
     </style>
 </head>
@@ -496,8 +496,26 @@ DETAIL_HTML = """
 </html>
 """
 
+# --- রুটস ---
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request, user_id: str = None):
+    conf = await get_config()
+    if user_id:
+        response = RedirectResponse(url="/")
+        response.set_cookie(key="tg_user_id", value=user_id, max_age=31536000)
+        return response
+    items = await content_col.find().sort("date", -1).to_list(100)
+    return Template(INDEX_HTML).render(items=items, conf=conf)
+
+@app.get("/view/{id}", response_class=HTMLResponse)
+async def detail(id: str):
+    item = await content_col.find_one({"_id": ObjectId(id)}); conf = await get_config()
+    if not item: return "Not Found"
+    return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
+
 # ==========================================
-# ৪. মেইন এন্ট্রি পয়েন্ট
+# ৪. মেইন এন্ট্রি পয়েন্ট (Conflict ফিক্সড)
 # ==========================================
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info")
+    # workers=1 নিশ্চিত করে যে শুধুমাত্র একটি প্রসেস চালু হবে, এতে Conflict Error আসবে না
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info", workers=1)
