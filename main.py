@@ -6,18 +6,19 @@ from bson.objectid import ObjectId
 import gridfs
 from datetime import datetime
 
-# ================= কনফিগারেশন (অবশ্যই পূরণ করুন) =================
+# ================= কনফিগারেশন =================
 BOT_TOKEN = "8655043839:AAGMxkYoZXR-nUzlcapZZfVwci09Z6x0-UE"
 MONGO_URI = "mongodb+srv://drama:drama@cluster0.sa4kvgu.mongodb.net/?appName=Cluster0"
 WEBAPP_URL = "https://indirect-meris-yeasinvai-95120fc6.koyeb.app" 
 FILE_CHANNEL_ID = -1003985353441 
-ADMIN_IDS = [7120801813, 7120801813] # এখানে আপনার এবং অন্যান্য অ্যাডমিনদের আইডি দিন
+ADMIN_IDS = [7120801813]
 
 # ডাটাবেস কানেকশন
 client = MongoClient(MONGO_URI)
 db = client['mini_app_db']
 movies_col, users_col, settings_col = db['movies'], db['users'], db['settings']
 tasks_col, premium_col, fs = db['tasks'], db['premium_plans'], gridfs.GridFS(db)
+logs_col = db['task_logs'] # টাস্ক লিমিট চেক করার জন্য
 
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -44,7 +45,7 @@ def create_btn(key, default_text, default_val):
         return types.InlineKeyboardButton(data['text'], url=data['val'])
     return types.InlineKeyboardButton(data['text'], callback_data=key)
 
-# ================= টেলিগ্রাম বট কমান্ডস =================
+# ================= টেলিグラム বট কমান্ডস =================
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
@@ -59,13 +60,16 @@ def start_cmd(message):
     banner = get_setting("start_poster", "https://via.placeholder.com/800x450")
 
     markup = types.InlineKeyboardMarkup(row_width=2)
+    # WebApp URL properly formatted
     markup.add(types.InlineKeyboardButton("🎬 Watch Now", web_app=types.WebAppInfo(WEBAPP_URL)))
     markup.add(create_btn("btn1", "📩 Movie Request", "Request..."), create_btn("btn2", "🔗 My Referral Link", "ref_logic"))
     markup.add(create_btn("btn3", "❓ Help & Tutorial", "Tutorial..."), create_btn("btn4", "🔗 All Channels", "https://t.me/your_link"))
 
-    bot.send_photo(message.chat.id, banner, caption=f"Hello {message.from_user.first_name}!\nWelcome to {site_name} ❤️🍿", reply_markup=markup)
+    try:
+        bot.send_photo(message.chat.id, banner, caption=f"Hello {message.from_user.first_name}!\nWelcome to {site_name} ❤️🍿", reply_markup=markup)
+    except:
+        bot.send_message(message.chat.id, f"Welcome to {site_name} ❤️🍿\n(Banner Error)", reply_markup=markup)
 
-# অ্যাডমিন কমান্ডস (Security Added)
 @bot.message_handler(commands=['sitename', 'notice', 'ads', 'step', 'lock', 'poster', 'add', 'adtask', 'monitask', 'addpr', 'btn1', 'btn2', 'btn3', 'btn4', 'dltask'])
 def admin_router(message):
     if not is_admin(message):
@@ -89,16 +93,16 @@ def admin_router(message):
         except: bot.reply_to(message, "ব্যবহার: `/btn1 নাম | লিঙ্ক বা টেক্সট`")
     elif cmd == 'adtask':
         try:
-            _, link, point = message.text.split()
-            tasks_col.insert_one({"type": "link", "url": link, "point": int(point)})
+            _, link, point, limit = message.text.split()
+            tasks_col.insert_one({"type": "link", "url": link, "point": int(point), "limit": int(limit)})
             bot.send_message(message.chat.id, "✅ লিঙ্ক টাস্ক সেভ হয়েছে!")
-        except: bot.send_message(message.chat.id, "ব্যবহার: `/adtask লিঙ্ক পয়েন্ট`")
+        except: bot.send_message(message.chat.id, "ব্যবহার: `/adtask লিঙ্ক পয়েন্ট লিমিট`")
     elif cmd == 'monitask':
         try:
-            _, zone, point = message.text.split()
-            tasks_col.insert_one({"type": "monet", "zone_id": zone, "point": int(point)})
+            _, zone, point, limit = message.text.split()
+            tasks_col.insert_one({"type": "monet", "zone_id": zone, "point": int(point), "limit": int(limit)})
             bot.send_message(message.chat.id, "✅ মনিটেগ টাস্ক সেভ হয়েছে!")
-        except: bot.send_message(message.chat.id, "ব্যবহার: `/monitask জোনআইডি পয়েন্ট`")
+        except: bot.send_message(message.chat.id, "ব্যবহার: `/monitask জোনআইডি পয়েন্ট লিমিট`")
     elif cmd == 'addpr':
         try:
             _, day_str, coin = message.text.split()
@@ -144,7 +148,7 @@ def state_manager(message):
             state['files'].append({"name": ep_name, "msg_id": fwd.message_id})
             bot.send_message(chat_id, f"✅ {ep_name} রিসিভ হয়েছে।")
         elif message.text == '/done':
-            movies_col.insert_one({"title": state['name'], "category": state['category'], "poster": state['poster_url'], "episodes": state['files'], "views": 0, "stars": 5.0, "likes": 0})
+            movies_col.insert_one({"title": state['name'], "category": state['category'], "poster": state['poster_url'], "episodes": state['files'], "views": [], "stars": 5.0, "likes": 0})
             bot.send_message(chat_id, "🚀 মুভি সেভ হয়েছে!")
             del user_states[chat_id]
 
@@ -165,12 +169,28 @@ def serve_poster(file_id):
     except: return "404", 404
 
 @app.route('/api/user/<tg_id>')
-def api_user(tg_id): return jsonify(get_user(tg_id))
+def api_user(tg_id): 
+    u = get_user(tg_id)
+    return jsonify(u)
 
 @app.route('/api/claim', methods=['POST'])
 def api_claim():
     d = request.json
-    users_col.update_one({"tg_id": str(d['tg_id'])}, {"$inc": {"balance": int(d['point'])}})
+    tg_id, task_id = str(d['tg_id']), d['task_id']
+    task = tasks_col.find_one({"_id": ObjectId(task_id)})
+    
+    today = datetime.now().strftime("%Y-%m-%d")
+    count = logs_col.count_documents({"tg_id": tg_id, "task_id": task_id, "date": today})
+    
+    if count < task.get('limit', 1):
+        users_col.update_one({"tg_id": tg_id}, {"$inc": {"balance": int(task['point'])}})
+        logs_col.insert_one({"tg_id": tg_id, "task_id": task_id, "date": today})
+        return jsonify({"status": "ok", "msg": f"Success! {task['point']} Coins Added."})
+    return jsonify({"status": "fail", "msg": "Daily Limit Reached!"})
+
+@app.route('/api/like/<m_id>', methods=['POST'])
+def api_like(m_id):
+    movies_col.update_one({"_id": ObjectId(m_id)}, {"$inc": {"likes": 1}})
     return jsonify({"status": "ok"})
 
 @app.route('/api/buy_premium', methods=['POST'])
@@ -183,7 +203,6 @@ def api_buy_pr():
         return jsonify({"status": "ok"})
     return jsonify({"status": "fail"})
 
-# --- UI টেমপ্লেট ---
 BASE_LAYOUT = """
 <!DOCTYPE html>
 <html>
@@ -193,27 +212,39 @@ BASE_LAYOUT = """
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@10/swiper-bundle.min.css" />
     <style>
-        body { background: #0b0f19; color: white; padding-bottom: 90px; font-family: sans-serif; }
-        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
-        .nav-item { flex:1; text-align:center; font-size:10px; color:#64748b; text-decoration:none; }
-        .nav-item.active { color:#6366f1; }
-        .swiper-slide { width: 80% !important; }
+        body { background: #0b0f19; color: white; padding-bottom: 90px; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .glass { background: rgba(30, 41, 59, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
+        .nav-item { flex:1; text-align:center; font-size:11px; color:#94a3b8; text-decoration:none; transition: 0.3s; }
+        .nav-item.active { color:#6366f1; transform: translateY(-3px); }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #6366f1; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; display: none; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div class="bg-indigo-600/20 py-2 px-4 border-b border-white/5"><marquee class="text-[10px]">{{ notice }}</marquee></div>
+    <div id="loading-overlay" class="fixed inset-0 bg-black z-[100] flex items-center justify-center transition-opacity duration-500">
+        <div class="loader" style="display:block; width:40px; height:40px;"></div>
+    </div>
+    <div class="bg-indigo-600/20 py-2 px-4 border-b border-white/5"><marquee class="text-[10px] font-medium">{{ notice }}</marquee></div>
     <div id="main-content" class="p-4">{{ content | safe }}</div>
-    <div class="fixed bottom-0 left-0 w-full glass border-t border-white/5 flex py-3 px-2 z-50">
+    
+    <div class="fixed bottom-4 left-4 right-4 glass rounded-[30px] flex py-4 px-2 z-50 shadow-2xl">
         <a href="/" class="nav-item {{'active' if page=='home'}}">🏠<br>Home</a>
         <a href="/tasks" class="nav-item {{'active' if page=='tasks'}}">📋<br>Tasks</a>
         <a href="/premium" class="nav-item {{'active' if page=='premium'}}">💎<br>Premium</a>
         <a href="/profile" class="nav-item {{'active' if page=='profile'}}">👤<br>Profile</a>
     </div>
+
     <script src="https://cdn.jsdelivr.net/npm/swiper@10/swiper-bundle.min.js"></script>
     <script>
         const tg = window.Telegram.WebApp; tg.expand();
-        const user = tg.initDataUnsafe.user || {id: "123", first_name: "Guest"};
-        new Swiper('.swiper', { slidesPerView: 'auto', spaceBetween: 15, loop: true });
+        const user = tg.initDataUnsafe.user || {id: "7120801813", first_name: "Admin", last_name: "User"};
+        
+        window.onload = () => { 
+            document.getElementById('loading-overlay').style.opacity = '0';
+            setTimeout(() => document.getElementById('loading-overlay').style.display = 'none', 500);
+        };
+
+        function showLoading() { document.getElementById('loading-overlay').style.display = 'flex'; document.getElementById('loading-overlay').style.opacity = '1'; }
     </script>
 </body>
 </html>
@@ -221,76 +252,85 @@ BASE_LAYOUT = """
 
 @app.route('/')
 def home():
+    site_name = get_setting("site_name", "Moviee BD")
     all_movies = list(movies_col.find())
-    top_movies = list(movies_col.find().sort("views", DESCENDING).limit(10))
+    # unique IP views calculation
+    for m in all_movies:
+        ip = request.remote_addr
+        if 'views' not in m or not isinstance(m['views'], list): m['views'] = []
+        if ip not in m['views']:
+            movies_col.update_one({"_id": m['_id']}, {"$push": {"views": ip}})
+    
+    top_movies = list(movies_col.find().sort("views", DESCENDING).limit(5))
+    
     content = render_template_string("""
-        <h1 class="text-2xl font-black mb-6 text-indigo-500 uppercase">{{site_name}}</h1>
+        <h1 class="text-2xl font-black mb-6 text-indigo-500 uppercase tracking-tighter">{{site_name}}</h1>
         
-        <!-- Trending Slider -->
-        <h2 class="text-sm font-bold mb-3 flex items-center">🔥 TOP 10 TRENDING</h2>
+        <h2 class="text-xs font-bold mb-3 text-gray-400 flex items-center">🔥 TRENDING NOW</h2>
         <div class="swiper mb-8">
             <div class="swiper-wrapper">
                 {% for m in top_movies %}
-                <div class="swiper-slide rounded-3xl overflow-hidden relative glass" onclick="location.href='/movie/{{m._id}}'">
-                    <img src="{{m.poster}}" class="w-full h-40 object-cover">
-                    <div class="absolute bottom-0 p-3 bg-black/60 w-full backdrop-blur-sm">
-                        <p class="text-[10px] font-bold truncate">{{m.title}}</p>
+                <div class="swiper-slide rounded-3xl overflow-hidden relative glass" onclick="showLoading(); location.href='/movie/{{m._id}}'">
+                    <img src="{{m.poster}}" class="w-full h-44 object-cover">
+                    <div class="absolute bottom-0 p-3 bg-gradient-to-t from-black w-full">
+                        <p class="text-[11px] font-bold truncate">{{m.title}}</p>
                     </div>
                 </div>
                 {% endfor %}
             </div>
         </div>
 
-        <h2 class="text-sm font-bold mb-4">🎬 RECENT MOVIES</h2>
+        <h2 class="text-xs font-bold mb-4 text-gray-400">🎬 RECENT UPLOADS</h2>
         <div class="grid grid-cols-2 gap-4">
             {% for m in movies %}
-            <div class="glass rounded-3xl overflow-hidden relative shadow-2xl" onclick="location.href='/movie/{{m._id}}'">
-                <img src="{{m.poster}}" class="w-full h-48 object-cover">
-                <span class="absolute top-2 left-2 bg-red-600 text-[8px] font-bold px-2 py-1 rounded-lg shadow-lg">🎬 {{m.episodes|length}} EP</span>
+            <div class="glass rounded-[25px] overflow-hidden relative shadow-xl" onclick="showLoading(); location.href='/movie/{{m._id}}'">
+                <img src="{{m.poster}}" class="w-full h-52 object-cover">
+                <span class="absolute top-2 left-2 bg-indigo-600 text-[8px] font-bold px-2 py-1 rounded-lg">⭐ EP {{m.episodes|length}}</span>
                 <div class="p-3">
-                    <h3 class="text-xs font-bold truncate">{{m.title}}</h3>
-                    <div class="flex justify-between items-center mt-2 text-[9px] text-gray-500">
-                        <span>👁 {{m.views}} Views</span>
-                        <span class="text-blue-400 font-bold uppercase">{{m.category}}</span>
-                    </div>
+                    <h3 class="text-[11px] font-bold truncate">{{m.title}}</h3>
+                    <p class="text-[9px] text-indigo-400 font-bold uppercase mt-1">{{m.category}}</p>
                 </div>
             </div>
             {% endfor %}
         </div>
-    """, movies=all_movies, top_movies=top_movies, site_name=get_setting("site_name", "Moviee BD"))
+        <script>new Swiper('.swiper', { slidesPerView: 'auto', spaceBetween: 15 });</script>
+    """, movies=all_movies, top_movies=top_movies, site_name=site_name)
     return render_template_string(BASE_LAYOUT, content=content, page='home', notice=get_setting("notice", "Welcome"))
 
 @app.route('/movie/<id>')
 def movie_detail(id):
     movie = movies_col.find_one({"_id": ObjectId(id)})
-    movies_col.update_one({"_id": ObjectId(id)}, {"$inc": {"views": 1}})
     content = render_template_string("""
-        <script src='//libtl.com/sdk.js' data-zone='{{zone}}' data-sdk='show_{{zone}}'></script>
         <div class="relative">
-            <img src="{{m.poster}}" class="w-full h-96 object-cover rounded-[40px] shadow-2xl mb-6">
+            <img src="{{m.poster}}" class="w-full h-[450px] object-cover rounded-[40px] shadow-2xl mb-6">
             <button onclick="history.back()" class="absolute top-4 left-4 glass w-10 h-10 rounded-full flex items-center justify-center">❮</button>
         </div>
-        <h1 class="text-3xl font-black mb-1">{{m.title}}</h1>
-        <p class="text-indigo-400 text-xs font-bold mb-6 tracking-widest uppercase">{{m.category}} • ⭐ 5.0 • 👁 {{m.views}}</p>
+        <h1 class="text-2xl font-black mb-1 px-2">{{m.title}}</h1>
+        <p class="text-indigo-400 text-[10px] font-bold mb-6 px-2 tracking-widest uppercase">{{m.category}} • ⭐ 5.0 • 👁 {{m.views|length}} Views</p>
         
-        <div class="flex justify-between mb-10 glass p-4 rounded-[30px] text-[10px] text-center font-bold">
-            <div class="flex-1 text-pink-500">❤️<br>Like</div><div class="flex-1 border-x border-white/10">💬<br>Comment</div>
-            <div class="flex-1 border-r border-white/10 text-blue-400">🔗<br>Share</div><div class="flex-1 text-yellow-500">⭐<br>Rate</div>
+        <div class="flex justify-between mb-8 glass p-4 rounded-[30px] text-[10px] text-center font-bold mx-2">
+            <div class="flex-1 text-pink-500" onclick="like('{{m._id}}')">❤️<br><span id="lcnt">{{m.likes}}</span> Likes</div>
+            <div class="flex-1 border-x border-white/10" onclick="alert('Comments coming soon!')">💬<br>Chat</div>
+            <div class="flex-1 text-blue-400" onclick="tg.shareUrl('{{webapp_url}}')">🔗<br>Share</div>
         </div>
 
-        <h3 class="text-sm font-bold mb-5 flex items-center"><span class="w-1.5 h-5 bg-indigo-500 rounded-full mr-2"></span> ALL EPISODES</h3>
-        <div class="grid grid-cols-3 gap-3">
+        <h3 class="text-xs font-bold mb-4 px-2">📺 EPISODES</h3>
+        <div class="grid grid-cols-3 gap-3 px-2">
             {% for ep in m.episodes %}
-            <div id="ep-{{loop.index}}" onclick="play('{{ep.msg_id}}', '{{loop.index}}')" class="glass py-4 rounded-2xl text-center border border-white/5 active:scale-90 transition">
-                <span class="text-[9px] font-bold block opacity-40 mb-1" id="lab-{{loop.index}}">LOCKED</span>
+            <div id="ep-{{loop.index}}" onclick="play('{{ep.msg_id}}', '{{loop.index}}')" class="glass py-5 rounded-2xl text-center border border-white/5 active:scale-95 transition">
+                <span class="text-[8px] font-bold block opacity-50 mb-1" id="lab-{{loop.index}}">LOCKED</span>
                 <span class="text-xs font-black">{{ep.name}}</span>
-                <div class="mt-2 w-4 h-0.5 bg-indigo-600 mx-auto rounded-full" id="bar-{{loop.index}}"></div>
             </div>
             {% endfor %}
         </div>
 
+        <script src='//libtl.com/sdk.js' data-zone='{{zone}}' data-sdk='show_{{zone}}'></script>
         <script>
             let steps = {{steps}}, lockMin = {{lock}}, zone = "{{zone}}";
+            function like(id) { fetch('/api/like/'+id, {method:'POST'}).then(()=> {
+                document.getElementById('lcnt').innerText = parseInt(document.getElementById('lcnt').innerText)+1;
+            }); }
+
             function play(id, idx) {
                 let sKey = "unl_"+id, d = JSON.parse(localStorage.getItem(sKey) || '{"s":0, "e":0}');
                 if(d.e > Date.now() || window.isPremium) {
@@ -298,87 +338,100 @@ def movie_detail(id):
                 } else if(d.s < steps) {
                     if(typeof window['show_'+zone] === 'function') {
                         window['show_'+zone]().then(() => { d.s++; localStorage.setItem(sKey, JSON.stringify(d)); updateUI(id, idx); });
-                    } else { alert("Ad Script Loading..."); }
+                    } else { alert("Ad Script Loading... Please wait"); }
                 } else {
                     d.e = Date.now() + (lockMin*60000); localStorage.setItem(sKey, JSON.stringify(d));
-                    updateUI(id, idx); alert("Successfully Unlocked! Enjoy Watching.");
+                    updateUI(id, idx); alert("Successfully Unlocked for "+lockMin+" mins!");
                 }
             }
             function updateUI(id, idx) {
                 let d = JSON.parse(localStorage.getItem("unl_"+id) || '{"s":0, "e":0}');
-                let lab = document.getElementById("lab-"+idx), bar = document.getElementById("bar-"+idx);
+                let lab = document.getElementById("lab-"+idx);
                 if(d.e > Date.now() || window.isPremium) { 
-                    lab.innerText = "UNLOCKED"; lab.style.color="#10b981"; bar.style.background="#10b981"; bar.style.width="80%";
-                } else { lab.innerText = d.s+"/"+steps+" ADS"; bar.style.width = (d.s/steps*80)+"%"; }
+                    lab.innerText = "READY"; lab.style.color="#10b981";
+                } else { lab.innerText = d.s+"/"+steps+" ADS"; }
             }
             fetch('/api/user/'+user.id).then(r=>r.json()).then(u=>{ window.isPremium = u.premium_until > Date.now(); 
                 {% for ep in m.episodes %} updateUI('{{ep.msg_id}}', '{{loop.index}}'); {% endfor %}
             });
         </script>
     """, m=movie, zone=get_setting("ads", "10351894"), steps=get_setting("step", 3), 
-       lock=get_setting("lock", 60), bot_user=bot.get_me().username)
-    return render_template_string(BASE_LAYOUT, content=content, page='home', notice=get_setting("notice", "Enjoy Your Movie"))
+       lock=get_setting("lock", 60), bot_user=bot.get_me().username, webapp_url=WEBAPP_URL)
+    return render_template_string(BASE_LAYOUT, content=content, page='home', notice="Loading...")
 
 @app.route('/tasks')
 def tasks_page():
     ts = list(tasks_col.find())
     content = render_template_string("""
-        <h2 class="text-xl font-black mb-6 text-indigo-400">TASK CENTER</h2>
+        <h2 class="text-xl font-black mb-6 text-indigo-400">EARN COINS</h2>
         <script src='//libtl.com/sdk.js'></script>
         {% for t in ts %}
-        <div class="glass p-5 rounded-[30px] mb-4 flex justify-between items-center border-r-4 border-indigo-500 shadow-xl">
-            <div><p class="font-bold text-sm">{{'Watch Video Ad' if t.type=='monet' else 'Visit Website'}}</p>
-            <p class="text-[10px] text-yellow-500 font-bold mt-1">REWARD: +{{t.point}} COINS</p></div>
-            <button onclick="doT('{{t._id}}','{{t.type}}','{{t.url}}','{{t.zone_id}}',{{t.point}})" class="bg-indigo-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest">Start</button>
+        <div class="glass p-5 rounded-[30px] mb-4 flex justify-between items-center border-l-4 border-indigo-500 shadow-xl">
+            <div>
+                <p class="font-bold text-sm">{{'Watch Video Ad' if t.type=='monet' else 'Visit Website'}}</p>
+                <p class="text-[10px] text-yellow-500 font-bold mt-1">+{{t.point}} COINS (Limit: {{t.limit}})</p>
+            </div>
+            <button onclick="doT('{{t._id}}','{{t.type}}','{{t.url}}','{{t.zone_id}}')" class="bg-indigo-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase">Start</button>
         </div>
         {% endfor %}
         <script>
-            function doT(id, ty, url, zone, pt) {
-                if(ty==='link') { window.open(url,'_blank'); setTimeout(()=>claim(pt), 10000); }
-                else { if(typeof window['show_'+zone] === 'function') window['show_'+zone]().then(()=>claim(pt)); }
+            function doT(id, ty, url, zone) {
+                if(ty==='link') { window.open(url,'_blank'); setTimeout(()=>claim(id), 5000); }
+                else { 
+                    let fn = 'show_'+zone;
+                    if(typeof window[fn] === 'function') window[fn]().then(()=>claim(id));
+                    else alert("Ad script not ready");
+                }
             }
-            function claim(p) { fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, point:p})}).then(()=>alert("Claim Successful! Coins Added.")); }
+            function claim(id) { 
+                fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, task_id:id})})
+                .then(r=>r.json()).then(res=>alert(res.msg)); 
+            }
         </script>
     """, ts=ts)
-    return render_template_string(BASE_LAYOUT, content=content, page='tasks', notice="Earn coins and buy premium")
+    return render_template_string(BASE_LAYOUT, content=content, page='tasks', notice="Complete tasks to get Premium")
 
 @app.route('/premium')
 def premium_page():
     plans = list(premium_col.find())
     content = render_template_string("""
         <h2 class="text-xl font-black mb-2 text-indigo-400">MEMBERSHIP</h2>
-        <p class="text-[10px] text-gray-500 mb-8 uppercase tracking-widest">Unlimited access without any ads</p>
+        <p class="text-[10px] text-gray-500 mb-8 uppercase tracking-widest">Get rid of all annoying ads</p>
         {% for p in plans %}
-        <div class="glass p-6 rounded-[35px] mb-4 flex justify-between items-center border-l-4 border-indigo-500 shadow-2xl">
+        <div class="glass p-6 rounded-[35px] mb-4 flex justify-between items-center border-r-4 border-indigo-500 shadow-2xl">
             <div><p class="text-lg font-black">{{p.label}}</p><p class="text-xs text-yellow-500 font-bold">{{p.cost}} COINS</p></div>
             <button onclick="buy('{{p._id}}')" class="bg-indigo-600 px-6 py-2 rounded-2xl text-xs font-black uppercase">Buy</button>
         </div>
         {% endfor %}
         <script>
             function buy(id) { fetch('/api/buy_premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, plan_id:id})})
-                .then(r=>r.json()).then(res=>alert(res.status==='ok'?"Success! Premium Activated.":"Failed! Not enough coins.")); }
+                .then(r=>r.json()).then(res=>alert(res.status==='ok'?"Success! Premium Activated.":"Failed! Low balance.")); }
         </script>
     """, plans=plans)
-    return render_template_string(BASE_LAYOUT, content=content, page='premium', notice="Get Premium to enjoy Ad-Free movies")
+    return render_template_string(BASE_LAYOUT, content=content, page='premium', notice="Premium users see no ads")
 
 @app.route('/profile')
 def profile_page():
     content = """
     <div class="text-center py-12">
-        <div id="av" class="w-24 h-24 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-full mx-auto mb-5 flex items-center justify-center text-3xl font-black shadow-[0_0_30px_rgba(79,70,229,0.5)] border-4 border-white/10"></div>
-        <h2 id="un" class="text-2xl font-black mb-1"></h2>
-        <p id="ui" class="text-gray-500 text-[10px] mb-10 tracking-[5px] uppercase"></p>
+        <div id="av" class="w-24 h-24 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-full mx-auto mb-5 flex items-center justify-center text-3xl font-black shadow-[0_0_40px_rgba(79,70,229,0.4)] border-4 border-white/10">?</div>
+        <h2 id="un" class="text-2xl font-black mb-1">Loading...</h2>
+        <p id="ui" class="text-gray-500 text-[10px] mb-10 tracking-[3px] uppercase">ID: 00000000</p>
+        
         <div class="grid grid-cols-2 gap-4 px-4">
-            <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Balance</p><p id="bl" class="text-xl font-black text-yellow-500">0</p></div>
+            <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">My Coins</p><p id="bl" class="text-2xl font-black text-yellow-500">0</p></div>
             <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Status</p><p id="st" class="text-[11px] font-black text-green-500">FREE</p></div>
         </div>
+        
+        <button onclick="tg.close()" class="mt-12 text-gray-500 text-xs font-bold uppercase tracking-widest">Close WebApp</button>
     </div>
     <script>
-        document.getElementById('un').innerText = user.first_name;
+        document.getElementById('un').innerText = (user.first_name || 'User') + ' ' + (user.last_name || '');
         document.getElementById('ui').innerText = "ID: " + user.id;
-        document.getElementById('av').innerText = user.first_name[0];
+        document.getElementById('av').innerText = user.first_name ? user.first_name[0] : 'U';
+        
         fetch('/api/user/'+user.id).then(r=>r.json()).then(d=>{
-            document.getElementById('bl').innerText = d.balance;
+            document.getElementById('bl').innerText = d.balance || 0;
             document.getElementById('st').innerText = d.premium_until > Date.now() ? "👑 PREMIUM" : "FREE USER";
         });
     </script>
