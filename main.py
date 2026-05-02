@@ -34,9 +34,10 @@ def get_setting(key, default):
     return default
 
 def get_user(tg_id, name="User"):
-    user = users_col.find_one({"tg_id": str(tg_id)})
+    tg_id = str(tg_id)
+    user = users_col.find_one({"tg_id": tg_id})
     if not user:
-        user = {"tg_id": str(tg_id), "name": name, "balance": 0, "premium_until": 0}
+        user = {"tg_id": tg_id, "name": name, "balance": 0, "premium_until": 0}
         users_col.insert_one(user)
     return user
 
@@ -51,7 +52,7 @@ def start_cmd(message):
             msg_id = int(msg_id_str)
             movie = movies_col.find_one({"episodes.msg_id": msg_id})
             
-            caption_text = "🎬 আপনার ফাইলটি প্রস্তুত!"
+            caption_text = "🎬 **আপনার ফাইলটি প্রস্তুত!**"
             if movie:
                 ep_name = "Episode"
                 for ep in movie['episodes']:
@@ -62,7 +63,7 @@ def start_cmd(message):
             
             bot.copy_message(message.chat.id, FILE_CHANNEL_ID, msg_id, caption=caption_text, parse_mode="Markdown")
         except Exception as e:
-            bot.send_message(message.chat.id, "❌ ফাইলটি পাওয়া যায়নি বা কোনো সমস্যা হয়েছে!")
+            bot.send_message(message.chat.id, "❌ ফাইলটি পাওয়া যায়নি!")
         return
 
     get_user(message.from_user.id, message.from_user.full_name)
@@ -74,13 +75,13 @@ def start_cmd(message):
     
     btn1_data = get_setting("btn1", {"text": "📩 Movie Request", "val": "Request Mode"})
     btn2_data = get_setting("btn2", {"text": "🔗 My Referral Link", "val": "ref_logic"})
-    btn3_data = get_setting("btn3", {"text": "❓ Help & Tutorial", "val": "Tutorial content"})
+    btn3_data = get_setting("btn3", {"text": "❓ Help & Tutorial", "val": "Help"})
     btn4_data = get_setting("btn4", {"text": "🔗 All Channels", "val": "https://t.me/example"})
 
     markup.add(types.InlineKeyboardButton(btn1_data['text'], callback_data="btn1"),
                types.InlineKeyboardButton(btn2_data['text'], callback_data="btn2"))
     markup.add(types.InlineKeyboardButton(btn3_data['text'], callback_data="btn3"),
-               types.InlineKeyboardButton(btn4_data['text'], url=btn4_data['val'] if btn4_data['val'].startswith("http") else "https://t.me/telegram"))
+               types.InlineKeyboardButton(btn4_data['text'], url=btn4_data['val'] if str(btn4_data['val']).startswith("http") else "https://t.me/telegram"))
 
     try:
         bot.send_photo(message.chat.id, banner, caption=f"Hello {message.from_user.first_name}!\nWelcome to {site_name} ❤️🍿", reply_markup=markup)
@@ -98,6 +99,13 @@ def admin_router(message):
     elif cmd in ['sitename', 'notice', 'ads', 'step', 'lock', 'poster']:
         user_states[message.chat.id] = {'step': f'up_{cmd}'}
         bot.send_message(message.chat.id, f"📝 নতুন {cmd} তথ্য দিন:")
+    elif cmd in ['btn1', 'btn2', 'btn3', 'btn4']:
+        try:
+            raw = message.text.split(None, 1)[1]
+            text, val = map(str.strip, raw.split('|'))
+            settings_col.update_one({"key": cmd}, {"$set": {"value": {"text": text, "val": val}}}, upsert=True)
+            bot.reply_to(message, "✅ বাটন আপডেট হয়েছে!")
+        except: bot.reply_to(message, "ব্যবহার: `/btn1 নাম | লিঙ্ক বা টেক্সট`")
     elif cmd == 'adtask':
         try:
             _, link, point, limit = message.text.split()
@@ -110,6 +118,13 @@ def admin_router(message):
             tasks_col.insert_one({"type": "monet", "zone_id": zone, "point": int(point), "limit": int(limit)})
             bot.send_message(message.chat.id, "✅ মনিটেগ টাস্ক সেভ হয়েছে!")
         except: bot.reply_to(message, "ব্যবহার: `/monitask জোনআইডি পয়েন্ট লিমিট`")
+    elif cmd == 'addpr':
+        try:
+            _, day_str, coin = message.text.split()
+            days = int(day_str.replace("day", ""))
+            premium_col.insert_one({"days": days, "cost": int(coin), "label": day_str})
+            bot.send_message(message.chat.id, "✅ প্রিমিয়াম প্ল্যান যুক্ত হয়েছে!")
+        except: bot.send_message(message.chat.id, "ব্যবহার: `/addpr 01day 30`")
     elif cmd == 'dltask':
         tasks_col.delete_many({})
         bot.send_message(message.chat.id, "🗑 সকল টাস্ক ডিলিট করা হয়েছে।")
@@ -118,7 +133,6 @@ def admin_router(message):
 def state_manager(message):
     chat_id, state = message.chat.id, user_states[message.chat.id]
     step = state['step']
-
     if step.startswith('up_'):
         key = step.replace('up_', '')
         val = message.text
@@ -127,8 +141,7 @@ def state_manager(message):
             val = f"{WEBAPP_URL}/poster/{p_id}"
         elif key in ['step', 'lock']: val = int(message.text)
         settings_col.update_one({"key": key}, {"$set": {"value": val}}, upsert=True)
-        bot.send_message(chat_id, f"✅ {key} আপডেট হয়েছে!")
-        del user_states[chat_id]
+        bot.send_message(chat_id, f"✅ {key} আপডেট হয়েছে!"); del user_states[chat_id]
     elif step == 'm_name':
         state['name'], state['step'] = message.text, 'm_cat'
         bot.send_message(chat_id, "📂 ক্যাটাগরি লিখুন:")
@@ -142,14 +155,12 @@ def state_manager(message):
     elif step == 'm_upload':
         if message.content_type in ['video', 'document']:
             fwd = bot.copy_message(FILE_CHANNEL_ID, chat_id, message.message_id)
-            ep_num = len(state['files']) + 1
-            ep_name = f"Episode {ep_num:02d}"
+            ep_name = f"Episode {len(state['files'])+1:02d}"
             state['files'].append({"name": ep_name, "msg_id": fwd.message_id})
             bot.send_message(chat_id, f"✅ {ep_name} রিসিভ হয়েছে।")
         elif message.text == '/done':
             movies_col.insert_one({"title": state['name'], "category": state['category'], "poster": state['poster_url'], "episodes": state['files'], "views": [], "likes": 0})
-            bot.send_message(chat_id, "🚀 মুভি সেভ হয়েছে!")
-            del user_states[chat_id]
+            bot.send_message(chat_id, "🚀 মুভি সেভ হয়েছে!"); del user_states[chat_id]
 
 @bot.callback_query_handler(func=lambda call: True)
 def cb_handler(call):
@@ -168,7 +179,8 @@ def serve_poster(file_id):
     except: return "404", 404
 
 @app.route('/api/user/<tg_id>')
-def api_user(tg_id): return jsonify(get_user(tg_id))
+def api_user(tg_id): 
+    return jsonify(get_user(tg_id))
 
 @app.route('/api/claim', methods=['POST'])
 def api_claim():
@@ -176,15 +188,23 @@ def api_claim():
     tg_id, task_id = str(d['tg_id']), d['task_id']
     task = tasks_col.find_one({"_id": ObjectId(task_id)})
     if not task: return jsonify({"status": "fail"})
-    
     today = datetime.now().strftime("%Y-%m-%d")
     count = logs_col.count_documents({"tg_id": tg_id, "task_id": task_id, "date": today})
-    
     if count < task.get('limit', 1):
         users_col.update_one({"tg_id": tg_id}, {"$inc": {"balance": int(task['point'])}})
         logs_col.insert_one({"tg_id": tg_id, "task_id": task_id, "date": today})
         return jsonify({"status": "ok", "msg": f"Success! {task['point']} Coins Added."})
     return jsonify({"status": "fail", "msg": "Daily Limit Reached!"})
+
+@app.route('/api/buy_premium', methods=['POST'])
+def api_buy_pr():
+    d = request.json
+    u, p = get_user(d['tg_id']), premium_col.find_one({"_id": ObjectId(d['plan_id'])})
+    if u['balance'] >= p['cost']:
+        expire = max(u['premium_until'], time.time()*1000) + (p['days']*86400000)
+        users_col.update_one({"tg_id": str(d['tg_id'])}, {"$set": {"premium_until": expire}, "$inc": {"balance": -p['cost']}})
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "fail"})
 
 # ================= ওয়েব অ্যাপ UI =================
 
@@ -216,8 +236,10 @@ BASE_LAYOUT = """
     </div>
 
     <script>
-        const tg = window.Telegram.WebApp; tg.expand();
-        const user = tg.initDataUnsafe.user || {id: "7120801813", first_name: "User"};
+        const tg = window.Telegram.WebApp;
+        tg.ready(); tg.expand();
+        // রিয়েল ইউজার আইডি পাওয়ার জন্য গ্লোবাল ভেরিয়েবল
+        const WebUser = tg.initDataUnsafe.user || {id: "7120801813", first_name: "Admin"};
         window.onload = () => { document.getElementById('loader').style.display = 'none'; };
     </script>
 </body>
@@ -281,48 +303,33 @@ def movie_detail(id):
             function play(id, idx) {
                 let sKey = "unl_"+id;
                 let d = JSON.parse(localStorage.getItem(sKey) || '{"s":0, "e":0}');
-
-                // লক টাইম চেক (সময় শেষ হলে রিসেট হবে)
-                if(d.e > 0 && d.e < Date.now()) {
-                    d = {"s":0, "e":0};
-                    localStorage.setItem(sKey, JSON.stringify(d));
-                }
+                if(d.e > 0 && d.e < Date.now()) { d = {"s":0, "e":0}; localStorage.setItem(sKey, JSON.stringify(d)); }
 
                 if(d.e > Date.now() || window.isPremium) {
                     window.open("https://t.me/{{bot_user}}?start=getfile_"+id, "_blank");
                 } else if(d.s < steps) {
                     if(typeof window['show_'+zone] === 'function') {
-                        window['show_'+zone]().then(() => { 
-                            d.s++; 
-                            localStorage.setItem(sKey, JSON.stringify(d)); 
-                            updateUI(id, idx); 
-                        });
+                        window['show_'+zone]().then(() => { d.s++; localStorage.setItem(sKey, JSON.stringify(d)); updateUI(id, idx); });
                     } else { alert("Ad Script Loading..."); }
                 } else {
                     d.e = Date.now() + (lockMin * 60000); 
                     localStorage.setItem(sKey, JSON.stringify(d));
-                    updateUI(id, idx); 
-                    alert("Unlocked! Enjoy for next "+lockMin+" minutes.");
+                    updateUI(id, idx); alert("Unlocked for next "+lockMin+" mins!");
                 }
             }
             function updateUI(id, idx) {
                 let d = JSON.parse(localStorage.getItem("unl_"+id) || '{"s":0, "e":0}');
                 let lab = document.getElementById("lab-"+idx);
-                if((d.e > 0 && d.e > Date.now()) || window.isPremium) { 
-                    lab.innerText = "READY"; lab.style.color="#10b981";
-                } else { 
-                    lab.innerText = d.s+"/"+steps+" ADS"; 
-                    lab.style.color="#64748b";
-                }
+                if((d.e > 0 && d.e > Date.now()) || window.isPremium) { lab.innerText = "READY"; lab.style.color="#10b981"; }
+                else { lab.innerText = d.s+"/"+steps+" ADS"; }
             }
-            fetch('/api/user/'+user.id).then(r=>r.json()).then(u=>{ 
+            fetch('/api/user/'+WebUser.id).then(r=>r.json()).then(u=>{ 
                 window.isPremium = u.premium_until > Date.now(); 
                 {% for ep in m.episodes %} updateUI('{{ep.msg_id}}', '{{loop.index}}'); {% endfor %}
             });
         </script>
-    """, m=m, zone=get_setting("ads", "10351894"), steps=get_setting("step", 3), 
-       lock=get_setting("lock", 60), bot_user=bot.get_me().username)
-    return render_template_string(BASE_LAYOUT, content=content, page='home', notice="Loading...")
+    """, m=m, zone=get_setting("ads", "10351894"), steps=get_setting("step", 3), lock=get_setting("lock", 60), bot_user=bot.get_me().username)
+    return render_template_string(BASE_LAYOUT, content=content, page='home', notice="Details")
 
 @app.route('/tasks')
 def tasks_page():
@@ -338,23 +345,16 @@ def tasks_page():
         {% endfor %}
         <script>
             function doT(id, ty, url, zone) {
-                if(ty==='link') { 
-                    window.open(url,'_blank'); 
-                    setTimeout(()=>claim(id), 10000); 
-                } else {
-                    // রেন্ডম জোন আইডি স্ক্রিপ্ট ইনজেকশন
-                    let s = document.createElement('script');
-                    s.src = '//libtl.com/sdk.js';
-                    s.setAttribute('data-zone', zone);
-                    s.setAttribute('data-sdk', 'show_'+zone);
-                    s.onload = () => {
-                        window['show_'+zone]().then(() => claim(id));
-                    };
+                if(ty==='link') { window.open(url,'_blank'); setTimeout(()=>claim(id), 10000); }
+                else {
+                    let s = document.createElement('script'); s.src = '//libtl.com/sdk.js';
+                    s.setAttribute('data-zone', zone); s.setAttribute('data-sdk', 'show_'+zone);
+                    s.onload = () => { window['show_'+zone]().then(() => claim(id)); };
                     document.body.appendChild(s);
                 }
             }
             function claim(id) { 
-                fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, task_id:id})})
+                fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:WebUser.id, task_id:id})})
                 .then(r=>r.json()).then(res=>alert(res.msg)); 
             }
         </script>
@@ -374,7 +374,7 @@ def premium_page():
         {% endfor %}
         <script>
             function buy(id) { 
-                fetch('/api/buy_premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, plan_id:id})})
+                fetch('/api/buy_premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:WebUser.id, plan_id:id})})
                 .then(r=>r.json()).then(res=>alert(res.status==='ok'?"Membership Activated!":"Insufficient Coins.")); 
             }
         </script>
@@ -394,10 +394,10 @@ def profile_page():
         </div>
     </div>
     <script>
-        document.getElementById('un').innerText = user.first_name || 'Guest';
-        document.getElementById('ui').innerText = "ID: " + user.id;
-        document.getElementById('av').innerText = (user.first_name ? user.first_name[0] : 'U');
-        fetch('/api/user/'+user.id).then(r=>r.json()).then(d=>{
+        document.getElementById('un').innerText = WebUser.first_name || 'Guest';
+        document.getElementById('ui').innerText = "ID: " + WebUser.id;
+        document.getElementById('av').innerText = (WebUser.first_name ? WebUser.first_name[0] : 'U');
+        fetch('/api/user/'+WebUser.id).then(r=>r.json()).then(d=>{
             document.getElementById('bl').innerText = d.balance || 0;
             document.getElementById('st').innerText = d.premium_until > Date.now() ? "👑 PREMIUM" : "FREE USER";
         });
@@ -405,7 +405,6 @@ def profile_page():
     """
     return render_template_string(BASE_LAYOUT, content=content, page='profile', notice="")
 
-# ================= রানার =================
 if __name__ == "__main__":
     threading.Thread(target=lambda: bot.polling(none_stop=True)).start()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
