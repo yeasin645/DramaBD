@@ -1,599 +1,391 @@
-import os
-import asyncio
-import logging
-import uuid
-from datetime import datetime, timedelta
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, CommandObject
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo, MenuButtonWebApp
-from motor.motor_asyncio import AsyncIOMotorClient
-from bson import ObjectId
-import uvicorn
-from jinja2 import Template
+import os, threading, io, time, json
+from flask import Flask, render_template_string, send_file, request, jsonify
+from telebot import TeleBot, types
+from pymongo import MongoClient, DESCENDING
+from bson.objectid import ObjectId
+import gridfs
+from datetime import datetime
 
-# ==========================================
-# ১. কনফিগারেশন এবং ডাটাবেস সেটআপ
-# ==========================================
-TOKEN = "8655043839:AAHC6IzkAhvHzSE9FqQbkcs_hkxJkcpN9l0"
-MONGO_URL = "mongodb+srv://drama:drama@cluster0.sa4kvgu.mongodb.net/?appName=Cluster0"
-OWNER_ID = 7120801813
-PUBLIC_CHANNEL = "@DramaStoreKing"
-APP_URL = "https://indirect-meris-yeasinvai-95120fc6.koyeb.app" 
-BOT_USERNAME = "dramastorkingsbot"
-PORT = int(os.environ.get("PORT", 8080))
+# ================= কনফিগারেশন (অবশ্যই পূরণ করুন) =================
+BOT_TOKEN = "8655043839:AAGMxkYoZXR-nUzlcapZZfVwci09Z6x0-UE"
+MONGO_URI = "mongodb+srv://drama:drama@cluster0.sa4kvgu.mongodb.net/?appName=Cluster0"
+WEBAPP_URL = "https://indirect-meris-yeasinvai-95120fc6.koyeb.app" 
+FILE_CHANNEL_ID = -1003985353441 
+ADMIN_IDS = [7120801813, 7120801813] # এখানে আপনার এবং অন্যান্য অ্যাডমিনদের আইডি দিন
 
-logging.basicConfig(level=logging.INFO)
-client = AsyncIOMotorClient(MONGO_URL)
-db = client['movie_dramabd']
-content_col = db['contents']
-settings_col = db['settings']
-file_store = db['files']
-user_col = db['users']
-view_logs = db['view_logs']
-notif_col = db['notif_channels']
-media_store = db['media_store']
+# ডাটাবেস কানেকশন
+client = MongoClient(MONGO_URI)
+db = client['mini_app_db']
+movies_col, users_col, settings_col = db['movies'], db['users'], db['settings']
+tasks_col, premium_col, fs = db['tasks'], db['premium_plans'], gridfs.GridFS(db)
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+bot = TeleBot(BOT_TOKEN)
+app = Flask(__name__)
+user_states = {}
 
-# --- এফএসএম (স্টেট ম্যানেজমেন্ট) ---
-class MovieState(StatesGroup):
-    name = State()
-    category = State()
-    photo = State()
-    quality = State()
-    file = State()
+# ================= ইউটিলিটি ফাংশনস =================
+def is_admin(m):
+    return m.from_user.id in ADMIN_IDS
 
-class SeriesState(StatesGroup):
-    name = State()
-    category = State()
-    photo = State()
-    files = State()
+def get_setting(key, default):
+    s = settings_col.find_one({"key": key})
+    return s['value'] if s else default
 
-class ReqState(StatesGroup):
-    movie_name = State()
+def get_user(tg_id, name="User"):
+    user = users_col.find_one({"tg_id": str(tg_id)})
+    if not user:
+        user = {"tg_id": str(tg_id), "name": name, "balance": 0, "premium_until": 0}
+        users_col.insert_one(user)
+    return user
 
-# --- হেল্পার ফাংশন সমূহ ---
-async def get_config():
-    conf = await settings_col.find_one({"id": "config"})
-    if not conf:
-        conf = {
-            "id": "config", "site_name": "Moviee BD", "note": "মুভি দেখার নতুন ঠিকানা!", 
-            "logo": f"{APP_URL}/media/default_logo", 
-            "autodlt": 10, "autolock": 10, "per": 10, "mtg": "10351894", "stp": 1, "protect": False,
-            "ad_timer": 12 
-        }
-        await settings_col.insert_one(conf)
-    return conf
+def create_btn(key, default_text, default_val):
+    data = get_setting(key, {"text": default_text, "val": default_val})
+    if str(data['val']).startswith("http"):
+        return types.InlineKeyboardButton(data['text'], url=data['val'])
+    return types.InlineKeyboardButton(data['text'], callback_data=key)
 
-async def process_photo(message: types.Message):
-    try:
-        photo = message.photo[-1]
-        file_info = await bot.get_file(photo.file_id)
-        photo_bytes = await bot.download_file(file_info.file_path)
-        media_id = str(uuid.uuid4())[:12]
-        await media_store.insert_one({
-            "media_id": media_id,
-            "data": photo_bytes.read(),
-            "mime": "image/jpeg"
-        })
-        return f"{APP_URL}/media/{media_id}"
-    except Exception as e:
-        logging.error(f"Media Error: {e}")
-        return "https://telegra.ph/file/0f2e825a07530467776d5.jpg"
+# ================= টেলিগ্রাম বট কমান্ডস =================
 
-async def auto_delete_task(chat_id, message_id, minutes):
-    if minutes > 0:
-        await asyncio.sleep(minutes * 60)
-        try: await bot.delete_message(chat_id, message_id)
-        except: pass
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    if message.text.startswith('/start getfile_'):
+        msg_id = message.text.split('getfile_')[1]
+        try: bot.copy_message(message.chat.id, FILE_CHANNEL_ID, int(msg_id))
+        except: bot.send_message(message.chat.id, "❌ ফাইলটি পাওয়া যায়নি!")
+        return
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_chat_menu_button(
-        menu_button=MenuButtonWebApp(text="Watch Now 🎬", web_app=WebAppInfo(url=APP_URL))
-    )
-    polling_task = asyncio.create_task(dp.start_polling(bot))
-    logging.info("বট পোলিং শুরু হয়েছে...")
-    yield
-    polling_task.cancel()
-    await bot.session.close()
+    get_user(message.from_user.id, message.from_user.full_name)
+    site_name = get_setting("site_name", "Moviee BD")
+    banner = get_setting("start_poster", "https://via.placeholder.com/800x450")
 
-app = FastAPI(lifespan=lifespan)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(types.InlineKeyboardButton("🎬 Watch Now", web_app=types.WebAppInfo(WEBAPP_URL)))
+    markup.add(create_btn("btn1", "📩 Movie Request", "Request..."), create_btn("btn2", "🔗 My Referral Link", "ref_logic"))
+    markup.add(create_btn("btn3", "❓ Help & Tutorial", "Tutorial..."), create_btn("btn4", "🔗 All Channels", "https://t.me/your_link"))
 
-# ==========================================
-# ২. ১৯টি কমান্ড (হুবহু অক্ষত)
-# ==========================================
+    bot.send_photo(message.chat.id, banner, caption=f"Hello {message.from_user.first_name}!\nWelcome to {site_name} ❤️🍿", reply_markup=markup)
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, command: CommandObject):
-    user_data = {"id": message.from_user.id, "name": message.from_user.full_name, "username": message.from_user.username, "date": datetime.now()}
-    await user_col.update_one({"id": message.from_user.id}, {"$set": user_data}, upsert=True)
-    conf = await get_config()
-    if command.args:
-        f_data = await file_store.find_one({"unique_id": command.args})
-        if f_data:
-            return await bot.copy_message(chat_id=message.chat.id, from_chat_id=OWNER_ID, message_id=f_data['msg_id'], caption=f"🎬 মুভি: {f_data['name']}\n📢 চ্যানেল: {PUBLIC_CHANNEL}", protect_content=conf.get("protect", False))
-    login_url = f"{APP_URL}/?user_id={message.from_user.id}"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎬 Watch Now (Premium Login)", url=login_url)],
-        [InlineKeyboardButton(text="📥 Movie Request", callback_data="req"), InlineKeyboardButton(text=" My Referral Link", switch_inline_query="")],
-        [InlineKeyboardButton(text=" Help & Tutorial", url="https://t.me/MovieeBD"), InlineKeyboardButton(text=" All Channels", url="https://t.me/all_channels")]
-    ])
-    await message.answer_photo(photo=conf['logo'], caption=f"Hello {message.from_user.first_name}!\nWelcome to {conf['site_name']} ❤️🍿", reply_markup=kb)
+# অ্যাডমিন কমান্ডস (Security Added)
+@bot.message_handler(commands=['sitename', 'notice', 'ads', 'step', 'lock', 'poster', 'add', 'adtask', 'monitask', 'addpr', 'btn1', 'btn2', 'btn3', 'btn4', 'dltask'])
+def admin_router(message):
+    if not is_admin(message):
+        bot.reply_to(message, "🚫 আপনি এই বটের অ্যাডমিন নন!")
+        return
 
-@dp.message(Command("movie"))
-async def add_movie(m: types.Message, state: FSMContext):
-    if m.from_user.id != OWNER_ID: return
-    await m.answer("🎬 মুভির নাম লিখুন:"); await state.set_state(MovieState.name)
-
-@dp.message(MovieState.name)
-async def m_name(m: types.Message, state: FSMContext):
-    await state.update_data(name=m.text, links=[], views=0)
-    await m.answer("📁 ক্যাটাগরি দিন (যেমন: Movie, CID, Bangla Natok):"); await state.set_state(MovieState.category)
-
-@dp.message(MovieState.category)
-async def m_cat(m: types.Message, state: FSMContext):
-    await state.update_data(cat=m.text)
-    await m.answer("🖼 পোস্টার ফটো পাঠান:"); await state.set_state(MovieState.photo)
-
-@dp.message(MovieState.photo, F.photo)
-async def m_photo(m: types.Message, state: FSMContext):
-    url = await process_photo(m); await state.update_data(poster=url)
-    await m.answer("⚙️ কোয়ালিটি দিন (যেমন: 720p):"); await state.set_state(MovieState.quality)
-
-@dp.message(MovieState.quality)
-async def m_quality(m: types.Message, state: FSMContext):
-    if m.text and m.text.strip().casefold() == "done":
-        data = await state.get_data()
-        if not data.get('links'): return await m.answer("❌ কোনো ফাইল নেই!")
-        await content_col.insert_one({"type": "movie", **data, "quality": data.get('cq'), "date": datetime.now()})
-        conf = await get_config()
-        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"🎬 মুভি: {data['name']}\n📢 {PUBLIC_CHANNEL}")
-        if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
-        await m.answer("✅ মুভি সাইটে আপলোড হয়েছে!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
-    else:
-        await state.update_data(cq=m.text)
-        await m.answer(f"📁 {m.text} এর ফাইলটি দিন (বা Done লিখুন):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
-        await state.set_state(MovieState.file)
-
-@dp.message(MovieState.file, F.video | F.document)
-async def m_file_store(m: types.Message, state: FSMContext):
-    data = await state.get_data(); uid = str(uuid.uuid4())[:8]
-    await file_store.insert_one({"unique_id": uid, "msg_id": m.message_id, "name": data['name']})
-    links = data.get('links', []); links.append({"q": data['cq'], "uid": uid}); await state.update_data(links=links)
-    await m.answer(f"✅ {data['cq']} সেভ। পরের কোয়ালিটি দিন বা Done লিখুন।"); await state.set_state(MovieState.quality)
-
-@dp.message(Command("series"))
-async def add_series(m: types.Message, state: FSMContext):
-    if m.from_user.id != OWNER_ID: return
-    await m.answer("📺 ড্রামার নাম লিখুন:"); await state.set_state(SeriesState.name)
-
-@dp.message(SeriesState.name)
-async def s_name(m: types.Message, state: FSMContext):
-    await state.update_data(name=m.text, episodes=[], views=0)
-    await m.answer("📁 ক্যাটাগরি দিন (যেমন: Series, CID):"); await state.set_state(SeriesState.category)
-
-@dp.message(SeriesState.category)
-async def s_cat(m: types.Message, state: FSMContext):
-    await state.update_data(cat=m.text)
-    await m.answer("🖼 পোস্টার ফটো পাঠান:"); await state.set_state(SeriesState.photo)
-
-@dp.message(SeriesState.photo, F.photo)
-async def s_photo(m: types.Message, state: FSMContext):
-    url = await process_photo(m); await state.update_data(poster=url)
-    await m.answer("📁 ১ম এপিসোড ফাইল পাঠান (বা Done):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Done")]], resize_keyboard=True))
-    await state.set_state(SeriesState.files)
-
-@dp.message(SeriesState.files)
-async def s_files_store(m: types.Message, state: FSMContext):
-    if m.text and m.text.strip().casefold() == "done":
-        data = await state.get_data(); await content_col.insert_one({"type": "series", **data, "date": datetime.now()})
-        conf = await get_config()
-        post = await bot.send_photo(chat_id=PUBLIC_CHANNEL, photo=data['poster'], caption=f"📺 ড্রামা: {data['name']}\n📢 {PUBLIC_CHANNEL}")
-        if int(conf['autodlt']) > 0: asyncio.create_task(auto_delete_task(PUBLIC_CHANNEL, post.message_id, int(conf['autodlt'])))
-        await m.answer("✅ ড্রামা সাইটে আপলোড হয়েছে!", reply_markup=types.ReplyKeyboardRemove()); await state.clear()
-    elif m.video or m.document:
-        data = await state.get_data(); uid = str(uuid.uuid4())[:8]
-        ep_n = f"Episode {len(data['episodes'])+1:02d}"
-        await file_store.insert_one({"unique_id": uid, "msg_id": m.message_id, "name": f"{data['name']} {ep_n}"})
-        eps = data.get('episodes', []); eps.append({"ep": ep_n, "uid": uid}); await state.update_data(episodes=eps)
-        await m.answer(f"✅ {ep_n} সেভ। পরের এপিসোড পাঠান বা Done লিখুন।")
-
-@dp.message(Command("protect"))
-async def cmd_protect(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    conf = await get_config(); ns = not conf.get("protect", False)
-    await settings_col.update_one({"id": "config"}, {"$set": {"protect": ns}}, upsert=True)
-    await m.answer(f"🔐 ফাইল প্রটেকশন এখন: **{'অন' if ns else 'অফ'}**")
-
-@dp.message(Command("logo"))
-async def set_logo(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    try: 
-        link = m.text.split()[1]
-        await settings_col.update_one({"id": "config"}, {"$set": {"logo": link}}, upsert=True)
-        await m.answer("✅ বটের লোগো আপডেট করা হয়েছে।")
-    except: await m.answer("ব্যবহার: /logo [Image_URL]")
-
-@dp.message(Command("autodlt"))
-async def set_autodlt(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    try: 
-        v = int(m.text.split()[1])
-        await settings_col.update_one({"id": "config"}, {"$set": {"autodlt": v}}, upsert=True)
-        await m.answer(f"✅ অটো ডিলিট সময়: {v} মিনিট।")
-    except: pass
-
-@dp.message(Command("autolock"))
-async def set_autolock(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    try: 
-        v = int(m.text.split()[1])
-        await settings_col.update_one({"id": "config"}, {"$set": {"autolock": v}}, upsert=True)
-        await m.answer(f"✅ অটো লক সময়: {v} মিনিট।")
-    except: pass
-
-@dp.message(Command("setname"))
-async def set_name(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    n = m.text.replace("/setname ","")
-    await settings_col.update_one({"id": "config"}, {"$set": {"site_name": n}}, upsert=True)
-    await m.answer(f"✅ সাইটের নাম সেট করা হয়েছে: {n}")
-
-@dp.message(Command("setnotice"))
-async def set_notice(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    n = m.text.replace("/setnotice ","")
-    await settings_col.update_one({"id": "config"}, {"$set": {"note": n}}, upsert=True)
-    await m.answer("✅ সাইট নোটিশ আপডেট হয়েছে।")
-
-@dp.message(Command("setmtg"))
-async def set_mtg(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    try:
-        v = m.text.split()[1]
-        await settings_col.update_one({"id": "config"}, {"$set": {"mtg": v}}, upsert=True)
-        await m.answer(f"✅ Monetag ID আপডেট হয়েছে: `{v}`")
-    except: await m.answer("ব্যবহার: /setmtg 123456")
-
-@dp.message(Command("seemtg"))
-async def see_mtg(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    conf = await get_config()
-    await m.answer(f"📢 বর্তমান Monetag ID: `{conf.get('mtg')}`")
-
-@dp.message(Command("setstp"))
-async def set_stp(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    try:
-        v = int(m.text.split()[1])
-        await settings_col.update_one({"id": "config"}, {"$set": {"stp": v}}, upsert=True)
-        await m.answer(f"✅ এড স্টেপ সেট করা হয়েছে: {v}")
-    except: await m.answer("ব্যবহার: /setstp 2")
-
-@dp.message(Command("dm"))
-async def del_m(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    n = m.text.replace("/dm ","")
-    res = await content_col.delete_one({"name": n, "type": "movie"})
-    await m.answer(f"🗑 {n} ডিলিট করা হয়েছে।" if res.deleted_count else "❌ পাওয়া যায়নি।")
-
-@dp.message(Command("ds"))
-async def del_s(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    n = m.text.replace("/ds ","")
-    res = await content_col.delete_one({"name": n, "type": "series"})
-    await m.answer(f"🗑 {n} ডিলিট করা হয়েছে।" if res.deleted_count else "❌ পাওয়া যায়নি।")
-
-@dp.message(Command("dlall"))
-async def del_all(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        await content_col.delete_many({}); await file_store.delete_many({}); await m.answer("💥 সব মুছে ফেলা হয়েছে!")
-
-@dp.message(Command("stats"))
-async def get_stats(m: types.Message):
-    if m.from_user.id == OWNER_ID:
-        c = await content_col.count_documents({}); u = await user_col.count_documents({})
-        await m.answer(f"📊 পরিসংখ্যান:\nপোস্ট: {c}\nইউজার: {u}")
-
-@dp.message(Command("perpost"))
-async def set_per(m: types.Message):
-    if m.from_user.id == OWNER_ID:
+    cmd = message.text.split()[0][1:]
+    
+    if cmd == 'add':
+        user_states[message.chat.id] = {'step': 'm_name', 'files': []}
+        bot.send_message(message.chat.id, "🎬 মুভির নাম লিখুন:")
+    elif cmd in ['sitename', 'notice', 'ads', 'step', 'lock', 'poster']:
+        user_states[message.chat.id] = {'step': f'up_{cmd}'}
+        bot.send_message(message.chat.id, f"📝 নতুন {cmd} এর তথ্য দিন:")
+    elif cmd in ['btn1', 'btn2', 'btn3', 'btn4']:
         try:
-            v = int(m.text.split()[1]); await settings_col.update_one({"id": "config"}, {"$set": {"per": v}}, upsert=True)
-            await m.answer(f"✅ পেজ লিমিট সেট: {v}")
-        except: pass
-
-@dp.message(Command("notifi"))
-async def set_notif(m: types.Message):
-    if m.from_user.id == OWNER_ID:
+            raw = message.text.split(None, 1)[1]
+            text, val = map(str.strip, raw.split('|'))
+            settings_col.update_one({"key": cmd}, {"$set": {"value": {"text": text, "val": val}}}, upsert=True)
+            bot.reply_to(message, "✅ বাটন আপডেট হয়েছে!")
+        except: bot.reply_to(message, "ব্যবহার: `/btn1 নাম | লিঙ্ক বা টেক্সট`")
+    elif cmd == 'adtask':
         try:
-            ch = m.text.split()[1]; await notif_col.update_one({"id": ch}, {"$set": {"id": ch}}, upsert=True)
-            await m.answer(f"✅ চ্যানেল যুক্ত: {ch}")
-        except: pass
+            _, link, point = message.text.split()
+            tasks_col.insert_one({"type": "link", "url": link, "point": int(point)})
+            bot.send_message(message.chat.id, "✅ লিঙ্ক টাস্ক সেভ হয়েছে!")
+        except: bot.send_message(message.chat.id, "ব্যবহার: `/adtask লিঙ্ক পয়েন্ট`")
+    elif cmd == 'monitask':
+        try:
+            _, zone, point = message.text.split()
+            tasks_col.insert_one({"type": "monet", "zone_id": zone, "point": int(point)})
+            bot.send_message(message.chat.id, "✅ মনিটেগ টাস্ক সেভ হয়েছে!")
+        except: bot.send_message(message.chat.id, "ব্যবহার: `/monitask জোনআইডি পয়েন্ট`")
+    elif cmd == 'addpr':
+        try:
+            _, day_str, coin = message.text.split()
+            days = int(day_str.replace("day", ""))
+            premium_col.insert_one({"days": days, "cost": int(coin), "label": day_str})
+            bot.send_message(message.chat.id, "✅ প্রিমিয়াম প্ল্যান যুক্ত হয়েছে!")
+        except: bot.send_message(message.chat.id, "ব্যবহার: `/addpr 01day 30`")
+    elif cmd == 'dltask':
+        tasks_col.delete_many({})
+        bot.send_message(message.chat.id, "🗑 সকল টাস্ক ডিলিট করা হয়েছে।")
 
-@dp.message(Command("batad"))
-async def set_batad(m: types.Message):
-    if m.from_user.id != OWNER_ID: return
-    try:
-        v = int(m.text.split()[1])
-        await settings_col.update_one({"id": "config"}, {"$set": {"ad_timer": v}}, upsert=True)
-        await m.answer(f"✅ বাটন ক্লিক এড টাইমার: {v} সেকেন্ড সেট করা হয়েছে।")
-    except: await m.answer("ব্যবহার: /batad 15")
+@bot.message_handler(func=lambda m: m.chat.id in user_states, content_types=['text', 'photo', 'video', 'document'])
+def state_manager(message):
+    chat_id, state = message.chat.id, user_states[message.chat.id]
+    step = state['step']
 
-@dp.callback_query(F.data == "req")
-async def req_cb(cb: types.CallbackQuery, state: FSMContext):
-    await cb.message.answer("📝 মুভির নাম লিখে পাঠান:"); await state.set_state(ReqState.movie_name); await cb.answer()
+    if step.startswith('up_'):
+        key = step.replace('up_', '')
+        if key == 'poster' and message.content_type == 'photo':
+            p_id = fs.put(bot.download_file(bot.get_file(message.photo[-1].file_id).file_path), filename="banner.jpg")
+            settings_col.update_one({"key": "start_poster"}, {"$set": {"value": f"{WEBAPP_URL}/poster/{p_id}"}}, upsert=True)
+            bot.send_message(chat_id, "✅ ব্যানার আপডেট হয়েছে!")
+        else:
+            val = int(message.text) if key in ['step', 'lock'] else message.text
+            settings_col.update_one({"key": key}, {"$set": {"value": val}}, upsert=True)
+            bot.send_message(chat_id, f"✅ {key} আপডেট হয়েছে!")
+        del user_states[chat_id]
 
-@dp.message(ReqState.movie_name)
-async def req_process(m: types.Message, state: FSMContext):
-    await bot.send_message(chat_id=OWNER_ID, text=f"🚨 রিকোয়েস্ট: {m.text}\n👤: {m.from_user.full_name}"); await m.answer("✅ পাঠানো হয়েছে!"); await state.clear()
+    elif step == 'm_name':
+        state['name'], state['step'] = message.text, 'm_cat'
+        bot.send_message(chat_id, "📂 ক্যাটাগরি লিখুন:")
+    elif step == 'm_cat':
+        state['category'], state['step'] = message.text, 'm_poster'
+        bot.send_message(chat_id, "🖼 পোস্টার ফটো পাঠান:")
+    elif step == 'm_poster' and message.content_type == 'photo':
+        p_id = fs.put(bot.download_file(bot.get_file(message.photo[-1].file_id).file_path), filename="p.jpg")
+        state['poster_url'], state['step'] = f"{WEBAPP_URL}/poster/{p_id}", 'm_upload'
+        bot.send_message(chat_id, "📁 ফাইলগুলো দিন, শেষ হলে /done দিন:")
+    elif step == 'm_upload':
+        if message.content_type in ['video', 'document']:
+            fwd = bot.copy_message(FILE_CHANNEL_ID, chat_id, message.message_id)
+            ep_name = f"Episode {len(state['files'])+1:02d}"
+            state['files'].append({"name": ep_name, "msg_id": fwd.message_id})
+            bot.send_message(chat_id, f"✅ {ep_name} রিসিভ হয়েছে।")
+        elif message.text == '/done':
+            movies_col.insert_one({"title": state['name'], "category": state['category'], "poster": state['poster_url'], "episodes": state['files'], "views": 0, "stars": 5.0, "likes": 0})
+            bot.send_message(chat_id, "🚀 মুভি সেভ হয়েছে!")
+            del user_states[chat_id]
 
+@bot.callback_query_handler(func=lambda call: True)
+def cb_handler(call):
+    data = get_setting(call.data, None)
+    if call.data == "btn2" and data and data['val'] == "ref_logic":
+        bot.send_message(call.message.chat.id, f"🔗 আপনার রেফারেল লিঙ্ক: https://t.me/{bot.get_me().username}?start={call.from_user.id}")
+    elif data:
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, data['val'])
 
-# ==========================================
-# ৩. ওয়েব ডিজাইন ও এড ফিক্স ( Lighting + 4 Col + Timer )
-# ==========================================
+# ================= ফ্লাস্ক ওয়েব অ্যাপ =================
 
-INDEX_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ conf.site_name }}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; }
-        .top-nav { background: #111; padding: 10px; display: flex; justify-content: space-between; position: sticky; top: 0; z-index: 1000; border-bottom: 2px solid #ff0000; }
-        .logo { font-size: 22px; font-weight: 900; color: #fff; text-transform: uppercase; }
-        .logo span { background: #ff0000; color: #fff; padding: 2px 8px; border-radius: 5px; margin-left: 5px; }
-        .movie-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 12px; }
-        .movie-card { background: #111; border-radius: 12px; overflow: hidden; border: 1px solid #222; position: relative; transition: 0.3s; }
-        .movie-card img { width: 100%; height: 220px; object-fit: cover; }
-        .badge-q { position: absolute; top: 8px; right: 8px; background: #ff0000; font-size: 10px; padding: 3px 6px; border-radius: 4px; font-weight: bold; }
-        .m-name { padding: 8px; font-weight: 600; font-size: 14px; text-align: center; color: #eee; min-height: 40px; }
-        .search-area { padding: 12px; }
-        .search-box { width: 100%; padding: 12px 25px; border-radius: 30px; border: 1px solid #ff0000; background: #111; color: #fff; outline: none; }
-    </style>
-</head>
-<body>
-    <div class="top-nav">
-        <button onclick="history.back()" class="btn btn-sm btn-outline-light">⬅ Back</button>
-        <div class="logo">Moviee <span>BD</span></div>
-        <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
-    </div>
-    <div class="search-area"><input type="text" class="search-box" placeholder="Search content..." onkeyup="searchMe(this.value)"></div>
-    <div class="movie-grid" id="movieList">
-        {% for i in items %}
-        <div class="movie-item" data-name="{{ i.name | lower }}">
-            <a href="/view/{{ i._id }}" class="text-decoration-none">
-                <div class="movie-card">
-                    <img src="{{ i.poster }}" loading="lazy">
-                    <div class="badge-q">{% if i.type == 'movie' %}{{ i.quality }}{% else %}{{ i.episodes | length }} EP{% endif %}</div>
-                    <div class="m-name">{{ i.name }}</div>
-                </div>
-            </a>
-        </div>
-        {% endfor %}
-    </div>
-    <script>
-        function searchMe(v) {
-            v = v.toLowerCase();
-            document.querySelectorAll('.movie-item').forEach(m => {
-                if(m.dataset.name.includes(v)) m.style.display = 'block';
-                else m.style.display = 'none';
-            });
-        }
-    </script>
-</body>
-</html>
-"""
+@app.route('/poster/<file_id>')
+def serve_poster(file_id):
+    try: return send_file(io.BytesIO(fs.get(ObjectId(file_id)).read()), mimetype='image/jpeg')
+    except: return "404", 404
 
-DETAIL_HTML = """
+@app.route('/api/user/<tg_id>')
+def api_user(tg_id): return jsonify(get_user(tg_id))
+
+@app.route('/api/claim', methods=['POST'])
+def api_claim():
+    d = request.json
+    users_col.update_one({"tg_id": str(d['tg_id'])}, {"$inc": {"balance": int(d['point'])}})
+    return jsonify({"status": "ok"})
+
+@app.route('/api/buy_premium', methods=['POST'])
+def api_buy_pr():
+    d = request.json
+    u, p = get_user(d['tg_id']), premium_col.find_one({"_id": ObjectId(d['plan_id'])})
+    if u['balance'] >= p['cost']:
+        expire = max(u['premium_until'], time.time()*1000) + (p['days']*86400000)
+        users_col.update_one({"tg_id": str(d['tg_id'])}, {"$set": {"premium_until": expire}, "$inc": {"balance": -p['cost']}})
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "fail"})
+
+# --- UI টেমপ্লেট ---
+BASE_LAYOUT = """
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ item.name }}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
-    <!-- Monetag SDK Script (User Provided) -->
-    <script src='//libtl.com/sdk.js' data-zone='{{ conf.mtg }}' data-sdk='show_{{ conf.mtg }}'></script>
-    
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@10/swiper-bundle.min.css" />
     <style>
-        body { background: #000; color: #fff; text-align: center; padding-bottom: 60px; font-family: sans-serif; }
-        .top-nav { background: #111; padding: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid #333; }
-        .poster { width: 85%; max-width: 320px; border-radius: 20px; border: 3px solid #ff0000; box-shadow: 0 0 25px rgba(255,0,0,0.6); margin: 25px auto; display: block; }
-        
-        /* প্রিমিয়াম টাইমার বক্স */
-        .timer-info { background: linear-gradient(90deg, #ff0000, #990000); padding: 15px; margin: 20px; border-radius: 12px; font-weight: bold; font-size: 18px; box-shadow: 0 0 20px #ff0000; display: none; }
-
-        /* লাইটিং প্রিমিয়াম বাটন */
-        .btn-premium { 
-            position: relative; overflow: hidden; padding: 18px; width: 90%; margin: 15px auto; 
-            border-radius: 15px; border: none; font-weight: 800; font-size: 18px; color: #fff;
-            background: linear-gradient(45deg, #ff0000, #ff5555);
-            box-shadow: 0 0 25px rgba(255, 0, 0, 0.7);
-            transition: 0.4s; text-decoration: none; display: block;
-        }
-        .btn-premium:active { transform: scale(0.95); }
-
-        /* ৪ কলাম ইপিসোড গ্রিড */
-        .ep-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 15px; }
-        .btn-ep { 
-            padding: 15px 2px; border-radius: 10px; font-weight: 800; font-size: 12px; 
-            border: none; color: #fff; cursor: pointer; text-decoration: none; 
-            display: flex; align-items: center; justify-content: center; min-height: 48px; transition: 0.3s;
-        }
-        .c1 { background: #e91e63; box-shadow: 0 0 10px rgba(233,30,99,0.5); } 
-        .c2 { background: #007bff; box-shadow: 0 0 10px rgba(0,123,255,0.5); } 
-        .c3 { background: #4caf50; box-shadow: 0 0 10px rgba(76,175,80,0.5); }
-        .c4 { background: #6f42c1; box-shadow: 0 0 10px rgba(111,66,193,0.5); }
-        .get-btn { background: #ffc107 !important; color: #000 !important; font-weight: 900; box-shadow: 0 0 20px #ffc107; display: none; }
+        body { background: #0b0f19; color: white; padding-bottom: 90px; font-family: sans-serif; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
+        .nav-item { flex:1; text-align:center; font-size:10px; color:#64748b; text-decoration:none; }
+        .nav-item.active { color:#6366f1; }
+        .swiper-slide { width: 80% !important; }
     </style>
 </head>
 <body>
-    <div class="top-nav">
-        <button onclick="location.href='/'" class="btn btn-sm btn-outline-light">🏠 Home</button>
-        <span style="font-weight:bold; color:red;">Premium Player</span>
-        <button onclick="location.reload()" class="btn btn-sm btn-danger">🔄 Reload</button>
+    <div class="bg-indigo-600/20 py-2 px-4 border-b border-white/5"><marquee class="text-[10px]">{{ notice }}</marquee></div>
+    <div id="main-content" class="p-4">{{ content | safe }}</div>
+    <div class="fixed bottom-0 left-0 w-full glass border-t border-white/5 flex py-3 px-2 z-50">
+        <a href="/" class="nav-item {{'active' if page=='home'}}">🏠<br>Home</a>
+        <a href="/tasks" class="nav-item {{'active' if page=='tasks'}}">📋<br>Tasks</a>
+        <a href="/premium" class="nav-item {{'active' if page=='premium'}}">💎<br>Premium</a>
+        <a href="/profile" class="nav-item {{'active' if page=='profile'}}">👤<br>Profile</a>
     </div>
-
-    <img src="{{ item.poster }}" class="poster">
-    <h2 class="px-3" style="font-weight:900;">{{ item.name }}</h2>
-
-    <!-- টাইমার মেসেজ -->
-    <div id="countdown-msg" class="timer-info"></div>
-
-    <div id="unlock-section">
-        {% if item.type == 'movie' %}
-            {% for l in item.links %}
-            <div id="box-{{ l.uid }}" class="px-3">
-                <button id="btn-{{ l.uid }}" class="btn-premium" onclick="startAd('{{ l.uid }}')">
-                    🔓 UNLOCK {{ l.q }} FILE
-                </button>
-                <div id="get-{{ l.uid }}" style="display:none;">
-                    <a href="https://t.me/{{ bot_u }}?start={{ l.uid }}" class="btn-premium" style="background:#00c853; box-shadow:0 0 25px #00c853;">
-                        📥 DOWNLOAD / WATCH NOW
-                    </a>
-                </div>
-            </div>
-            {% endfor %}
-        {% else %}
-            <div class="ep-grid">
-            {% for e in item.episodes %}
-                <div id="box-{{ e.uid }}">
-                    <button id="btn-{{ e.uid }}" class="btn-ep {{ ['c1','c2','c3', 'c4']|random }}" onclick="startAd('{{ e.uid }}')">
-                        Episode {{ "%02d"|format(loop.index) }}
-                    </button>
-                    <a id="get-{{ e.uid }}" href="https://t.me/{{ bot_u }}?start={{ e.uid }}" class="btn-ep get-btn">GET</a>
-                </div>
-            {% endfor %}
-            </div>
-            <p style="color:#ffcc00; font-weight:bold; font-size:14px; margin-top:10px;">ইপিসোড এ ক্লিক করে এড দেখুন এবং আনলক করুন</p>
-        {% endif %}
-    </div>
-
+    <script src="https://cdn.jsdelivr.net/npm/swiper@10/swiper-bundle.min.js"></script>
     <script>
-        const zoneId = "{{ conf.mtg }}";
-        const adTimer = {{ conf.ad_timer }};
-        const autoLock = {{ conf.autolock }};
-        let adStartedAt = 0;
-
-        function setLocal(key, minutes) {
-            const expiry = new Date().getTime() + (minutes * 60 * 1000);
-            localStorage.setItem(key, JSON.stringify({ expiry: expiry }));
-        }
-
-        function getLocal(key) {
-            const itemStr = localStorage.getItem(key);
-            if (!itemStr) return null;
-            const item = JSON.parse(itemStr);
-            if (new Date().getTime() > item.expiry) { localStorage.removeItem(key); return null; }
-            return item;
-        }
-
-        function updateLockDisplay() {
-            const allKeys = Object.keys(localStorage);
-            const activeKey = allKeys.find(k => k.startsWith('unlocked_') && getLocal(k));
-            const msgBox = document.getElementById('countdown-msg');
-            
-            if(activeKey) {
-                const item = JSON.parse(localStorage.getItem(activeKey));
-                const remaining = Math.round((item.expiry - new Date().getTime()) / 1000);
-                if(remaining > 0) {
-                    const mins = Math.floor(remaining / 60);
-                    const secs = remaining % 60;
-                    msgBox.style.display = 'block';
-                    msgBox.innerHTML = `🔐 এটি ${mins} মি. ${secs} সে. পর পুনরায় লক হবে।`;
-                } else { msgBox.style.display = 'none'; location.reload(); }
-            } else { msgBox.style.display = 'none'; }
-        }
-
-        function checkPersistence() {
-            document.querySelectorAll('[id^="btn-"]').forEach(btn => {
-                const uid = btn.id.replace('btn-', '');
-                if (getLocal('unlocked_' + uid)) {
-                    btn.style.display = 'none';
-                    const getLink = document.getElementById('get-' + uid);
-                    if(getLink) getLink.style.display = 'flex';
-                }
-            });
-        }
-
-        function startAd(uid) {
-            if (getLocal('unlocked_' + uid)) return;
-            
-            // বিজ্ঞাপন ফাংশন কল
-            const sdkFunc = "show_" + zoneId;
-            
-            if (adStartedAt === 0) {
-                if (typeof window[sdkFunc] === 'function') {
-                    window[sdkFunc](); // এড শো করবে
-                    adStartedAt = new Date().getTime();
-                    alert("এড শুরু হয়েছে! অন্তত " + adTimer + " সেকেন্ড এডটি দেখুন, তারপর আবার বাটনে ক্লিক করুন।");
-                } else {
-                    alert("এড লোড হচ্ছে না, পেজটি রিফ্রেশ দিন।");
-                    location.reload();
-                }
-                return;
-            }
-
-            const elapsed = (new Date().getTime() - adStartedAt) / 1000;
-            if (elapsed < adTimer) {
-                alert("দয়া করে এডটি সম্পূর্ণ দেখুন! আরও " + Math.round(adTimer - elapsed) + " সেকেন্ড বাকি।");
-                return;
-            }
-
-            setLocal('unlocked_' + uid, autoLock);
-            location.reload();
-        }
-
-        window.onload = () => {
-            checkPersistence();
-            setInterval(updateLockDisplay, 1000);
-        };
+        const tg = window.Telegram.WebApp; tg.expand();
+        const user = tg.initDataUnsafe.user || {id: "123", first_name: "Guest"};
+        new Swiper('.swiper', { slidesPerView: 'auto', spaceBetween: 15, loop: true });
     </script>
 </body>
 </html>
 """
 
-# ==========================================
-# ৪. মেইন এন্ট্রি পয়েন্ট ও রুট লজিক
-# ==========================================
+@app.route('/')
+def home():
+    all_movies = list(movies_col.find())
+    top_movies = list(movies_col.find().sort("views", DESCENDING).limit(10))
+    content = render_template_string("""
+        <h1 class="text-2xl font-black mb-6 text-indigo-500 uppercase">{{site_name}}</h1>
+        
+        <!-- Trending Slider -->
+        <h2 class="text-sm font-bold mb-3 flex items-center">🔥 TOP 10 TRENDING</h2>
+        <div class="swiper mb-8">
+            <div class="swiper-wrapper">
+                {% for m in top_movies %}
+                <div class="swiper-slide rounded-3xl overflow-hidden relative glass" onclick="location.href='/movie/{{m._id}}'">
+                    <img src="{{m.poster}}" class="w-full h-40 object-cover">
+                    <div class="absolute bottom-0 p-3 bg-black/60 w-full backdrop-blur-sm">
+                        <p class="text-[10px] font-bold truncate">{{m.title}}</p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request, page: int = 1, user_id: str = None):
-    conf = await get_config()
-    if user_id:
-        response = RedirectResponse(url="/")
-        response.set_cookie(key="tg_user_id", value=user_id, max_age=31536000)
-        return response
-    
-    per_page = conf.get('per', 10)
-    items = await content_col.find().sort("date", -1).skip((page - 1) * per_page).limit(per_page).to_list(per_page)
-    return Template(INDEX_HTML).render(items=items, conf=conf, current_page=page)
+        <h2 class="text-sm font-bold mb-4">🎬 RECENT MOVIES</h2>
+        <div class="grid grid-cols-2 gap-4">
+            {% for m in movies %}
+            <div class="glass rounded-3xl overflow-hidden relative shadow-2xl" onclick="location.href='/movie/{{m._id}}'">
+                <img src="{{m.poster}}" class="w-full h-48 object-cover">
+                <span class="absolute top-2 left-2 bg-red-600 text-[8px] font-bold px-2 py-1 rounded-lg shadow-lg">🎬 {{m.episodes|length}} EP</span>
+                <div class="p-3">
+                    <h3 class="text-xs font-bold truncate">{{m.title}}</h3>
+                    <div class="flex justify-between items-center mt-2 text-[9px] text-gray-500">
+                        <span>👁 {{m.views}} Views</span>
+                        <span class="text-blue-400 font-bold uppercase">{{m.category}}</span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    """, movies=all_movies, top_movies=top_movies, site_name=get_setting("site_name", "Moviee BD"))
+    return render_template_string(BASE_LAYOUT, content=content, page='home', notice=get_setting("notice", "Welcome"))
 
-@app.get("/view/{id}", response_class=HTMLResponse)
-async def detail(id: str):
-    await content_col.update_one({"_id": ObjectId(id)}, {"$inc": {"views": 1}})
-    item = await content_col.find_one({"_id": ObjectId(id)})
-    conf = await get_config()
-    if not item: return "Not Found"
-    return Template(DETAIL_HTML).render(item=item, conf=conf, bot_u=BOT_USERNAME)
+@app.route('/movie/<id>')
+def movie_detail(id):
+    movie = movies_col.find_one({"_id": ObjectId(id)})
+    movies_col.update_one({"_id": ObjectId(id)}, {"$inc": {"views": 1}})
+    content = render_template_string("""
+        <script src='//libtl.com/sdk.js' data-zone='{{zone}}' data-sdk='show_{{zone}}'></script>
+        <div class="relative">
+            <img src="{{m.poster}}" class="w-full h-96 object-cover rounded-[40px] shadow-2xl mb-6">
+            <button onclick="history.back()" class="absolute top-4 left-4 glass w-10 h-10 rounded-full flex items-center justify-center">❮</button>
+        </div>
+        <h1 class="text-3xl font-black mb-1">{{m.title}}</h1>
+        <p class="text-indigo-400 text-xs font-bold mb-6 tracking-widest uppercase">{{m.category}} • ⭐ 5.0 • 👁 {{m.views}}</p>
+        
+        <div class="flex justify-between mb-10 glass p-4 rounded-[30px] text-[10px] text-center font-bold">
+            <div class="flex-1 text-pink-500">❤️<br>Like</div><div class="flex-1 border-x border-white/10">💬<br>Comment</div>
+            <div class="flex-1 border-r border-white/10 text-blue-400">🔗<br>Share</div><div class="flex-1 text-yellow-500">⭐<br>Rate</div>
+        </div>
 
-@app.get("/media/{media_id}")
-async def serve_media(media_id: str):
-    media = await media_store.find_one({"media_id": media_id})
-    if media: return Response(content=media['data'], media_type=media['mime'])
-    return Response(status_code=404)
+        <h3 class="text-sm font-bold mb-5 flex items-center"><span class="w-1.5 h-5 bg-indigo-500 rounded-full mr-2"></span> ALL EPISODES</h3>
+        <div class="grid grid-cols-3 gap-3">
+            {% for ep in m.episodes %}
+            <div id="ep-{{loop.index}}" onclick="play('{{ep.msg_id}}', '{{loop.index}}')" class="glass py-4 rounded-2xl text-center border border-white/5 active:scale-90 transition">
+                <span class="text-[9px] font-bold block opacity-40 mb-1" id="lab-{{loop.index}}">LOCKED</span>
+                <span class="text-xs font-black">{{ep.name}}</span>
+                <div class="mt-2 w-4 h-0.5 bg-indigo-600 mx-auto rounded-full" id="bar-{{loop.index}}"></div>
+            </div>
+            {% endfor %}
+        </div>
 
+        <script>
+            let steps = {{steps}}, lockMin = {{lock}}, zone = "{{zone}}";
+            function play(id, idx) {
+                let sKey = "unl_"+id, d = JSON.parse(localStorage.getItem(sKey) || '{"s":0, "e":0}');
+                if(d.e > Date.now() || window.isPremium) {
+                    window.open("https://t.me/{{bot_user}}?start=getfile_"+id, "_blank");
+                } else if(d.s < steps) {
+                    if(typeof window['show_'+zone] === 'function') {
+                        window['show_'+zone]().then(() => { d.s++; localStorage.setItem(sKey, JSON.stringify(d)); updateUI(id, idx); });
+                    } else { alert("Ad Script Loading..."); }
+                } else {
+                    d.e = Date.now() + (lockMin*60000); localStorage.setItem(sKey, JSON.stringify(d));
+                    updateUI(id, idx); alert("Successfully Unlocked! Enjoy Watching.");
+                }
+            }
+            function updateUI(id, idx) {
+                let d = JSON.parse(localStorage.getItem("unl_"+id) || '{"s":0, "e":0}');
+                let lab = document.getElementById("lab-"+idx), bar = document.getElementById("bar-"+idx);
+                if(d.e > Date.now() || window.isPremium) { 
+                    lab.innerText = "UNLOCKED"; lab.style.color="#10b981"; bar.style.background="#10b981"; bar.style.width="80%";
+                } else { lab.innerText = d.s+"/"+steps+" ADS"; bar.style.width = (d.s/steps*80)+"%"; }
+            }
+            fetch('/api/user/'+user.id).then(r=>r.json()).then(u=>{ window.isPremium = u.premium_until > Date.now(); 
+                {% for ep in m.episodes %} updateUI('{{ep.msg_id}}', '{{loop.index}}'); {% endfor %}
+            });
+        </script>
+    """, m=movie, zone=get_setting("ads", "10351894"), steps=get_setting("step", 3), 
+       lock=get_setting("lock", 60), bot_user=bot.get_me().username)
+    return render_template_string(BASE_LAYOUT, content=content, page='home', notice=get_setting("notice", "Enjoy Your Movie"))
+
+@app.route('/tasks')
+def tasks_page():
+    ts = list(tasks_col.find())
+    content = render_template_string("""
+        <h2 class="text-xl font-black mb-6 text-indigo-400">TASK CENTER</h2>
+        <script src='//libtl.com/sdk.js'></script>
+        {% for t in ts %}
+        <div class="glass p-5 rounded-[30px] mb-4 flex justify-between items-center border-r-4 border-indigo-500 shadow-xl">
+            <div><p class="font-bold text-sm">{{'Watch Video Ad' if t.type=='monet' else 'Visit Website'}}</p>
+            <p class="text-[10px] text-yellow-500 font-bold mt-1">REWARD: +{{t.point}} COINS</p></div>
+            <button onclick="doT('{{t._id}}','{{t.type}}','{{t.url}}','{{t.zone_id}}',{{t.point}})" class="bg-indigo-600 px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest">Start</button>
+        </div>
+        {% endfor %}
+        <script>
+            function doT(id, ty, url, zone, pt) {
+                if(ty==='link') { window.open(url,'_blank'); setTimeout(()=>claim(pt), 10000); }
+                else { if(typeof window['show_'+zone] === 'function') window['show_'+zone]().then(()=>claim(pt)); }
+            }
+            function claim(p) { fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, point:p})}).then(()=>alert("Claim Successful! Coins Added.")); }
+        </script>
+    """, ts=ts)
+    return render_template_string(BASE_LAYOUT, content=content, page='tasks', notice="Earn coins and buy premium")
+
+@app.route('/premium')
+def premium_page():
+    plans = list(premium_col.find())
+    content = render_template_string("""
+        <h2 class="text-xl font-black mb-2 text-indigo-400">MEMBERSHIP</h2>
+        <p class="text-[10px] text-gray-500 mb-8 uppercase tracking-widest">Unlimited access without any ads</p>
+        {% for p in plans %}
+        <div class="glass p-6 rounded-[35px] mb-4 flex justify-between items-center border-l-4 border-indigo-500 shadow-2xl">
+            <div><p class="text-lg font-black">{{p.label}}</p><p class="text-xs text-yellow-500 font-bold">{{p.cost}} COINS</p></div>
+            <button onclick="buy('{{p._id}}')" class="bg-indigo-600 px-6 py-2 rounded-2xl text-xs font-black uppercase">Buy</button>
+        </div>
+        {% endfor %}
+        <script>
+            function buy(id) { fetch('/api/buy_premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, plan_id:id})})
+                .then(r=>r.json()).then(res=>alert(res.status==='ok'?"Success! Premium Activated.":"Failed! Not enough coins.")); }
+        </script>
+    """, plans=plans)
+    return render_template_string(BASE_LAYOUT, content=content, page='premium', notice="Get Premium to enjoy Ad-Free movies")
+
+@app.route('/profile')
+def profile_page():
+    content = """
+    <div class="text-center py-12">
+        <div id="av" class="w-24 h-24 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-full mx-auto mb-5 flex items-center justify-center text-3xl font-black shadow-[0_0_30px_rgba(79,70,229,0.5)] border-4 border-white/10"></div>
+        <h2 id="un" class="text-2xl font-black mb-1"></h2>
+        <p id="ui" class="text-gray-500 text-[10px] mb-10 tracking-[5px] uppercase"></p>
+        <div class="grid grid-cols-2 gap-4 px-4">
+            <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Balance</p><p id="bl" class="text-xl font-black text-yellow-500">0</p></div>
+            <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Status</p><p id="st" class="text-[11px] font-black text-green-500">FREE</p></div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('un').innerText = user.first_name;
+        document.getElementById('ui').innerText = "ID: " + user.id;
+        document.getElementById('av').innerText = user.first_name[0];
+        fetch('/api/user/'+user.id).then(r=>r.json()).then(d=>{
+            document.getElementById('bl').innerText = d.balance;
+            document.getElementById('st').innerText = d.premium_until > Date.now() ? "👑 PREMIUM" : "FREE USER";
+        });
+    </script>
+    """
+    return render_template_string(BASE_LAYOUT, content=content, page='profile', notice="")
+
+# ================= রানার =================
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info", workers=1)
+    threading.Thread(target=lambda: bot.polling(none_stop=True)).start()
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
