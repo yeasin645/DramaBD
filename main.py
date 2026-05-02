@@ -49,7 +49,6 @@ def start_cmd(message):
         try:
             msg_id_str = message.text.split('getfile_')[1]
             msg_id = int(msg_id_str)
-            # ডাটাবেস থেকে মুভি ও এপিসোড নাম খোঁজা
             movie = movies_col.find_one({"episodes.msg_id": msg_id})
             
             caption_text = "🎬 আপনার ফাইলটি প্রস্তুত!"
@@ -66,7 +65,6 @@ def start_cmd(message):
             bot.send_message(message.chat.id, "❌ ফাইলটি পাওয়া যায়নি বা কোনো সমস্যা হয়েছে!")
         return
 
-    # সাধারণ স্টার্ট মেনু
     get_user(message.from_user.id, message.from_user.full_name)
     site_name = get_setting("site_name", "Moviee BD")
     banner = get_setting("start_poster", "https://via.placeholder.com/800x450")
@@ -74,7 +72,6 @@ def start_cmd(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(types.InlineKeyboardButton("🎬 Watch Now", web_app=types.WebAppInfo(WEBAPP_URL)))
     
-    # বাটন ডাইনামিক লোডিং (ফিক্সড)
     btn1_data = get_setting("btn1", {"text": "📩 Movie Request", "val": "Request Mode"})
     btn2_data = get_setting("btn2", {"text": "🔗 My Referral Link", "val": "ref_logic"})
     btn3_data = get_setting("btn3", {"text": "❓ Help & Tutorial", "val": "Tutorial content"})
@@ -92,10 +89,7 @@ def start_cmd(message):
 
 @bot.message_handler(commands=['sitename', 'notice', 'ads', 'step', 'lock', 'poster', 'add', 'adtask', 'monitask', 'addpr', 'btn1', 'btn2', 'btn3', 'btn4', 'dltask'])
 def admin_router(message):
-    if not is_admin(message):
-        bot.reply_to(message, "🚫 আপনি অ্যাডমিন নন!")
-        return
-
+    if not is_admin(message): return
     cmd = message.text.split()[0][1:]
     
     if cmd == 'add':
@@ -104,28 +98,21 @@ def admin_router(message):
     elif cmd in ['sitename', 'notice', 'ads', 'step', 'lock', 'poster']:
         user_states[message.chat.id] = {'step': f'up_{cmd}'}
         bot.send_message(message.chat.id, f"📝 নতুন {cmd} তথ্য দিন:")
-    elif cmd in ['btn1', 'btn2', 'btn3', 'btn4']:
-        try:
-            raw = message.text.split(None, 1)[1]
-            text, val = map(str.strip, raw.split('|'))
-            settings_col.update_one({"key": cmd}, {"$set": {"value": {"text": text, "val": val}}}, upsert=True)
-            bot.reply_to(message, "✅ বাটন আপডেট হয়েছে!")
-        except: bot.reply_to(message, "ব্যবহার: `/btn1 নাম | লিঙ্ক বা টেক্সট`")
     elif cmd == 'adtask':
         try:
             _, link, point, limit = message.text.split()
             tasks_col.insert_one({"type": "link", "url": link, "point": int(point), "limit": int(limit)})
-            bot.send_message(message.chat.id, f"✅ লিঙ্ক টাস্ক সেট: {limit} লিমিট")
+            bot.send_message(message.chat.id, "✅ লিঙ্ক টাস্ক সেভ হয়েছে!")
         except: bot.reply_to(message, "ব্যবহার: `/adtask লিঙ্ক পয়েন্ট লিমিট`")
     elif cmd == 'monitask':
         try:
             _, zone, point, limit = message.text.split()
             tasks_col.insert_one({"type": "monet", "zone_id": zone, "point": int(point), "limit": int(limit)})
-            bot.send_message(message.chat.id, f"✅ মনিটেগ টাস্ক সেট: {limit} লিমিট")
+            bot.send_message(message.chat.id, "✅ মনিটেগ টাস্ক সেভ হয়েছে!")
         except: bot.reply_to(message, "ব্যবহার: `/monitask জোনআইডি পয়েন্ট লিমিট`")
     elif cmd == 'dltask':
         tasks_col.delete_many({})
-        bot.send_message(message.chat.id, "🗑 টাস্ক ডিলিট করা হয়েছে।")
+        bot.send_message(message.chat.id, "🗑 সকল টাস্ক ডিলিট করা হয়েছে।")
 
 @bot.message_handler(func=lambda m: m.chat.id in user_states, content_types=['text', 'photo', 'video', 'document'])
 def state_manager(message):
@@ -142,7 +129,6 @@ def state_manager(message):
         settings_col.update_one({"key": key}, {"$set": {"value": val}}, upsert=True)
         bot.send_message(chat_id, f"✅ {key} আপডেট হয়েছে!")
         del user_states[chat_id]
-
     elif step == 'm_name':
         state['name'], state['step'] = message.text, 'm_cat'
         bot.send_message(chat_id, "📂 ক্যাটাগরি লিখুন:")
@@ -152,7 +138,7 @@ def state_manager(message):
     elif step == 'm_poster' and message.content_type == 'photo':
         p_id = fs.put(bot.download_file(bot.get_file(message.photo[-1].file_id).file_path), filename="p.jpg")
         state['poster_url'], state['step'] = f"{WEBAPP_URL}/poster/{p_id}", 'm_upload'
-        bot.send_message(chat_id, "📁 ফাইলগুলো দিন, শেষ হলে /done দিন:")
+        bot.send_message(chat_id, "📁 ফাইল দিন, শেষ হলে /done দিন:")
     elif step == 'm_upload':
         if message.content_type in ['video', 'document']:
             fwd = bot.copy_message(FILE_CHANNEL_ID, chat_id, message.message_id)
@@ -168,15 +154,13 @@ def state_manager(message):
 @bot.callback_query_handler(func=lambda call: True)
 def cb_handler(call):
     if call.data == "btn2":
-        bot.send_message(call.message.chat.id, f"🔗 আপনার রেফারেল লিঙ্ক: https://t.me/{bot.get_me().username}?start={call.from_user.id}")
-        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, f"🔗 রেফার লিঙ্ক: https://t.me/{bot.get_me().username}?start={call.from_user.id}")
     else:
         data = get_setting(call.data, None)
-        if data:
-            bot.send_message(call.message.chat.id, str(data['val']))
-            bot.answer_callback_query(call.id)
+        if data: bot.send_message(call.message.chat.id, str(data['val']))
+    bot.answer_callback_query(call.id)
 
-# ================= ফ্লাস্ক ওয়েব অ্যাপ =================
+# ================= এপিআই লজিক =================
 
 @app.route('/poster/<file_id>')
 def serve_poster(file_id):
@@ -184,15 +168,14 @@ def serve_poster(file_id):
     except: return "404", 404
 
 @app.route('/api/user/<tg_id>')
-def api_user(tg_id): 
-    return jsonify(get_user(tg_id))
+def api_user(tg_id): return jsonify(get_user(tg_id))
 
 @app.route('/api/claim', methods=['POST'])
 def api_claim():
     d = request.json
     tg_id, task_id = str(d['tg_id']), d['task_id']
     task = tasks_col.find_one({"_id": ObjectId(task_id)})
-    if not task: return jsonify({"status": "fail", "msg": "Task error"})
+    if not task: return jsonify({"status": "fail"})
     
     today = datetime.now().strftime("%Y-%m-%d")
     count = logs_col.count_documents({"tg_id": tg_id, "task_id": task_id, "date": today})
@@ -203,7 +186,8 @@ def api_claim():
         return jsonify({"status": "ok", "msg": f"Success! {task['point']} Coins Added."})
     return jsonify({"status": "fail", "msg": "Daily Limit Reached!"})
 
-# --- UI টেমপ্লেট ---
+# ================= ওয়েব অ্যাপ UI =================
+
 BASE_LAYOUT = """
 <!DOCTYPE html>
 <html>
@@ -212,17 +196,15 @@ BASE_LAYOUT = """
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { background: #0b0f19; color: white; padding-bottom: 100px; font-family: sans-serif; }
+        body { background: #0b0f19; color: white; padding-bottom: 100px; font-family: sans-serif; overflow-x: hidden; }
         .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
         .nav-item { flex:1; text-align:center; font-size:10px; color:#64748b; text-decoration:none; transition: 0.3s; }
         .nav-item.active { color:#6366f1; }
-        #loading-overlay { position: fixed; inset: 0; background: #0b0f19; z-index: 9999; display: flex; align-items: center; justify-content: center; }
-        .spinner { width: 40px; height: 40px; border: 4px solid #1e293b; border-top: 4px solid #6366f1; border-radius: 50%; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loader { position: fixed; inset: 0; background: #0b0f19; z-index: 9999; display: flex; align-items: center; justify-content: center; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div id="loading-overlay"><div class="spinner"></div></div>
+    <div id="loader">LOADING...</div>
     <div class="bg-indigo-600/20 py-2 px-4 border-b border-white/5"><marquee class="text-[10px]">{{ notice }}</marquee></div>
     <div id="main-content" class="p-4">{{ content | safe }}</div>
     
@@ -235,9 +217,8 @@ BASE_LAYOUT = """
 
     <script>
         const tg = window.Telegram.WebApp; tg.expand();
-        const user = tg.initDataUnsafe.user || {id: "7120801813", first_name: "Admin"};
-        window.onload = () => { document.getElementById('loading-overlay').style.display = 'none'; };
-        function showLoad() { document.getElementById('loading-overlay').style.display = 'flex'; }
+        const user = tg.initDataUnsafe.user || {id: "7120801813", first_name: "User"};
+        window.onload = () => { document.getElementById('loader').style.display = 'none'; };
     </script>
 </body>
 </html>
@@ -246,14 +227,11 @@ BASE_LAYOUT = """
 @app.route('/')
 def home():
     movies = list(movies_col.find())
-    for m in movies:
-        if not isinstance(m.get('views'), list): movies_col.update_one({"_id": m["_id"]}, {"$set": {"views": []}})
-    
     content = render_template_string("""
         <h1 class="text-2xl font-black mb-6 text-indigo-500 uppercase">{{site_name}}</h1>
         <div class="grid grid-cols-2 gap-4">
             {% for m in movies %}
-            <div class="glass rounded-3xl overflow-hidden shadow-2xl" onclick="showLoad(); location.href='/movie/{{m._id}}'">
+            <div class="glass rounded-3xl overflow-hidden shadow-2xl" onclick="location.href='/movie/{{m._id}}'">
                 <img src="{{m.poster}}" class="w-full h-52 object-cover">
                 <div class="p-3">
                     <h3 class="text-[11px] font-bold truncate">{{m.title}}</h3>
@@ -271,13 +249,9 @@ def home():
 @app.route('/movie/<id>')
 def movie_detail(id):
     m = movies_col.find_one({"_id": ObjectId(id)})
-    if not m: return "Movie Not Found", 404
-    
-    # IP Based Unique Views
     ip = request.remote_addr
-    if ip not in m.get('views', []):
-        movies_col.update_one({"_id": ObjectId(id)}, {"$push": {"views": ip}})
-
+    if ip not in m.get('views', []): movies_col.update_one({"_id": ObjectId(id)}, {"$push": {"views": ip}})
+    
     content = render_template_string("""
         <div class="relative mb-6">
             <img src="{{m.poster}}" class="w-full h-96 object-cover rounded-[40px] shadow-2xl">
@@ -286,10 +260,9 @@ def movie_detail(id):
         <h1 class="text-2xl font-black mb-1 px-2">{{m.title}}</h1>
         <p class="text-indigo-400 text-xs font-bold mb-4 px-2 tracking-widest uppercase">{{m.category}} • 👁 {{m.views|length}}</p>
         
-        <!-- লক টাইম শো -->
         <div class="glass p-4 rounded-2xl mb-8 mx-2 border-l-4 border-yellow-500">
             <p class="text-xs font-bold text-yellow-500 uppercase">⏳ Unlock Info</p>
-            <p class="text-[10px] text-gray-300">মুভিটি আনলক করার পর <b>{{lock}} মিনিট</b> পর্যন্ত দেখতে পারবেন।</p>
+            <p class="text-[10px] text-gray-300">মুভিটি আনলক করার পর <b>{{lock}} মিনিট</b> পর্যন্ত দেখতে পারবেন। এরপর আবার লক হয়ে যাবে।</p>
         </div>
 
         <h3 class="text-sm font-bold mb-5 px-2">📂 EPISODES</h3>
@@ -306,32 +279,50 @@ def movie_detail(id):
         <script>
             let steps = {{steps}}, lockMin = {{lock}}, zone = "{{zone}}";
             function play(id, idx) {
-                let sKey = "unl_"+id, d = JSON.parse(localStorage.getItem(sKey) || '{"s":0, "e":0}');
+                let sKey = "unl_"+id;
+                let d = JSON.parse(localStorage.getItem(sKey) || '{"s":0, "e":0}');
+
+                // লক টাইম চেক (সময় শেষ হলে রিসেট হবে)
+                if(d.e > 0 && d.e < Date.now()) {
+                    d = {"s":0, "e":0};
+                    localStorage.setItem(sKey, JSON.stringify(d));
+                }
+
                 if(d.e > Date.now() || window.isPremium) {
                     window.open("https://t.me/{{bot_user}}?start=getfile_"+id, "_blank");
                 } else if(d.s < steps) {
                     if(typeof window['show_'+zone] === 'function') {
-                        window['show_'+zone]().then(() => { d.s++; localStorage.setItem(sKey, JSON.stringify(d)); updateUI(id, idx); });
-                    } else { alert("Ad script loading... please wait"); }
+                        window['show_'+zone]().then(() => { 
+                            d.s++; 
+                            localStorage.setItem(sKey, JSON.stringify(d)); 
+                            updateUI(id, idx); 
+                        });
+                    } else { alert("Ad Script Loading..."); }
                 } else {
-                    d.e = Date.now() + (lockMin*60000); localStorage.setItem(sKey, JSON.stringify(d));
-                    updateUI(id, idx); alert("Unlocked! You can watch now.");
+                    d.e = Date.now() + (lockMin * 60000); 
+                    localStorage.setItem(sKey, JSON.stringify(d));
+                    updateUI(id, idx); 
+                    alert("Unlocked! Enjoy for next "+lockMin+" minutes.");
                 }
             }
             function updateUI(id, idx) {
                 let d = JSON.parse(localStorage.getItem("unl_"+id) || '{"s":0, "e":0}');
                 let lab = document.getElementById("lab-"+idx);
-                if(d.e > Date.now() || window.isPremium) { 
+                if((d.e > 0 && d.e > Date.now()) || window.isPremium) { 
                     lab.innerText = "READY"; lab.style.color="#10b981";
-                } else { lab.innerText = d.s+"/"+steps+" ADS"; }
+                } else { 
+                    lab.innerText = d.s+"/"+steps+" ADS"; 
+                    lab.style.color="#64748b";
+                }
             }
-            fetch('/api/user/'+user.id).then(r=>r.json()).then(u=>{ window.isPremium = u.premium_until > Date.now(); 
+            fetch('/api/user/'+user.id).then(r=>r.json()).then(u=>{ 
+                window.isPremium = u.premium_until > Date.now(); 
                 {% for ep in m.episodes %} updateUI('{{ep.msg_id}}', '{{loop.index}}'); {% endfor %}
             });
         </script>
     """, m=m, zone=get_setting("ads", "10351894"), steps=get_setting("step", 3), 
        lock=get_setting("lock", 60), bot_user=bot.get_me().username)
-    return render_template_string(BASE_LAYOUT, content=content, page='home', notice="Loading Movie Details")
+    return render_template_string(BASE_LAYOUT, content=content, page='home', notice="Loading...")
 
 @app.route('/tasks')
 def tasks_page():
@@ -347,8 +338,20 @@ def tasks_page():
         {% endfor %}
         <script>
             function doT(id, ty, url, zone) {
-                if(ty==='link') { window.open(url,'_blank'); setTimeout(()=>claim(id), 10000); }
-                else { alert("Monetag Ads Loading..."); }
+                if(ty==='link') { 
+                    window.open(url,'_blank'); 
+                    setTimeout(()=>claim(id), 10000); 
+                } else {
+                    // রেন্ডম জোন আইডি স্ক্রিপ্ট ইনজেকশন
+                    let s = document.createElement('script');
+                    s.src = '//libtl.com/sdk.js';
+                    s.setAttribute('data-zone', zone);
+                    s.setAttribute('data-sdk', 'show_'+zone);
+                    s.onload = () => {
+                        window['show_'+zone]().then(() => claim(id));
+                    };
+                    document.body.appendChild(s);
+                }
             }
             function claim(id) { 
                 fetch('/api/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, task_id:id})})
@@ -370,11 +373,13 @@ def premium_page():
         </div>
         {% endfor %}
         <script>
-            function buy(id) { fetch('/api/buy_premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, plan_id:id})})
-                .then(r=>r.json()).then(res=>alert(res.status==='ok'?"Success!":"Not enough coins.")); }
+            function buy(id) { 
+                fetch('/api/buy_premium',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tg_id:user.id, plan_id:id})})
+                .then(r=>r.json()).then(res=>alert(res.status==='ok'?"Membership Activated!":"Insufficient Coins.")); 
+            }
         </script>
     """, plans=plans)
-    return render_template_string(BASE_LAYOUT, content=content, page='premium', notice="Get premium for no ads")
+    return render_template_string(BASE_LAYOUT, content=content, page='premium', notice="Get Premium to hide all ads")
 
 @app.route('/profile')
 def profile_page():
@@ -384,7 +389,7 @@ def profile_page():
         <h2 id="un" class="text-2xl font-black mb-1">User</h2>
         <p id="ui" class="text-gray-500 text-[10px] mb-10 tracking-[5px]">ID: 000000</p>
         <div class="grid grid-cols-2 gap-4 px-4">
-            <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Coins</p><p id="bl" class="text-xl font-black text-yellow-500">0</p></div>
+            <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Balance</p><p id="bl" class="text-xl font-black text-yellow-500">0</p></div>
             <div class="glass p-6 rounded-[35px] shadow-xl"><p class="text-[10px] text-gray-400 uppercase font-bold mb-1">Status</p><p id="st" class="text-[11px] font-black text-green-500">FREE</p></div>
         </div>
     </div>
