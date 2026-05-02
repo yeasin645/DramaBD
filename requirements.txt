@@ -1,13 +1,5 @@
-aiogram
-motor
-fastapi
-uvicorn
-telegraph
-jinja2
-python-multipart
-fastapi
-uvicorn
-aiogram
-motor
-jinja2
+flask
+pyTelegramBotAPI
 pymongo
+requests
+beautifulsoup4
